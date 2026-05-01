@@ -94,6 +94,13 @@ export const esxiClient = {
 
 export const pfsenseClient = {
   /**
+   * pfSense 접속 주소 가져오기
+   */
+  getUrl() {
+    return process.env.PFSENSE_URL || 'https://localhost';
+  },
+
+  /**
    * pfSense API 호출 시 SSL 인증서 검증 여부 설정
    */
   getInsecure() {
@@ -101,12 +108,13 @@ export const pfsenseClient = {
   },
 
   async addPortForward(internalIp: string, externalPort: number) {
+    const url = this.getUrl();
     if (this.getInsecure()) {
       // Node.js 환경에서 자가 서명 인증서 허용
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     }
     
-    console.log(`[pfSense] Port forwarding added: ${externalPort} -> ${internalIp}:22 (Insecure: ${this.getInsecure()})`);
+    console.log(`[pfSense] (${url}) Port forwarding added: ${externalPort} -> ${internalIp}:22 (Insecure: ${this.getInsecure()})`);
     
     // 실제 구현 시 fetch 또는 axios 사용 시 agent: new https.Agent({ rejectUnauthorized: false }) 방식을 권장합니다.
   }
