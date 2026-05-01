@@ -20,15 +20,27 @@ interface VmResult {
  * GOVC 방식 구현
  */
 const govcStrategy = {
-  env: `export GOVC_URL="${process.env.GOVC_URL}" GOVC_USERNAME="${process.env.GOVC_USERNAME}" GOVC_PASSWORD="${process.env.GOVC_PASSWORD}" GOVC_INSECURE=${process.env.GOVC_INSECURE} GOVC_DATASTORE="${process.env.GOVC_DATASTORE}" GOVC_NETWORK="${process.env.GOVC_NETWORK}"`,
+  getEnv() {
+    return {
+      ...process.env,
+      GOVC_URL: process.env.GOVC_URL || '',
+      GOVC_USERNAME: process.env.GOVC_USERNAME || '',
+      GOVC_PASSWORD: process.env.GOVC_PASSWORD || '',
+      GOVC_INSECURE: (process.env.GOVC_INSECURE === '1' || process.env.GOVC_INSECURE === 'true') ? '1' : '0',
+      GOVC_DATASTORE: process.env.GOVC_DATASTORE || '',
+      GOVC_NETWORK: process.env.GOVC_NETWORK || '',
+    };
+  },
 
   async createVm(params: VmCreateParams): Promise<VmResult> {
     const ramMb = params.ram_gb * 1024;
-    await execPromise(`${this.env} && govc vm.clone -vm "${params.template}" -on=false "${params.name}"`);
-    await execPromise(`${this.env} && govc vm.change -vm "${params.name}" -c ${params.vcpu} -m ${ramMb}`);
-    await execPromise(`${this.env} && govc vm.power -on "${params.name}"`);
+    const env = this.getEnv();
+
+    await execPromise(`govc vm.clone -vm "${params.template}" -on=false "${params.name}"`, { env });
+    await execPromise(`govc vm.change -vm "${params.name}" -c ${params.vcpu} -m ${ramMb}`, { env });
+    await execPromise(`govc vm.power -on "${params.name}"`, { env });
     
-    const { stdout } = await execPromise(`${this.env} && govc vm.info -json "${params.name}"`);
+    const { stdout } = await execPromise(`govc vm.info -json "${params.name}"`, { env });
     const info = JSON.parse(stdout);
     return {
       vm_id: info.VirtualMachines[0].Config.Uuid,
@@ -75,13 +87,27 @@ export const esxiClient = {
        console.log('RestAPI: Powering off', name);
        return;
     }
-    const env = (govcStrategy as any).env;
-    return await execPromise(`${env} && govc vm.power -off "${name}"`);
+    const env = (govcStrategy as any).getEnv();
+    return await execPromise(`govc vm.power -off "${name}"`, { env });
   }
 };
 
 export const pfsenseClient = {
+  /**
+   * pfSense API 호출 시 SSL 인증서 검증 여부 설정
+   */
+  getInsecure() {
+    return process.env.PFSENSE_INSECURE === 'true' || process.env.PFSENSE_INSECURE === '1';
+  },
+
   async addPortForward(internalIp: string, externalPort: number) {
-    console.log(`Port forwarding added: ${externalPort} -> ${internalIp}:22`);
+    if (this.getInsecure()) {
+      // Node.js 환경에서 자가 서명 인증서 허용
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    }
+    
+    console.log(`[pfSense] Port forwarding added: ${externalPort} -> ${internalIp}:22 (Insecure: ${this.getInsecure()})`);
+    
+    // 실제 구현 시 fetch 또는 axios 사용 시 agent: new https.Agent({ rejectUnauthorized: false }) 방식을 권장합니다.
   }
 };
