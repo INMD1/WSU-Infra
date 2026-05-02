@@ -14,12 +14,13 @@ export const vmService = {
   },
 
   async createVm(data: any) {
-    // 1. 실제 ESXi에 VM 생성 명령 (govc 호출)
+    // 1. 실제 ESXi 에 VM 생성 명령 (govc 호출)
     const provisioned = await esxiClient.createVmFromTemplate({
       name: data.name,
-      template: data.image_id, // image_id를 템플릿 이름으로 사용
+      template: data.image_id, // image_id 를 템플릿 이름으로 사용
       vcpu: data.vcpu,
       ram_gb: data.ram_gb,
+      ssh_public_key: data.ssh_public_key, // Cloud-init 을 위한 SSH 공개키
     });
 
     const newVm = {
@@ -28,6 +29,7 @@ export const vmService = {
       status: provisioned.status as any,
       vcpu: data.vcpu,
       ram_gb: data.ram_gb,
+      ssh_public_key: data.ssh_public_key, // Cloud-init 을 위한 SSH 공개키
       disk_gb: data.disk_gb,
       image_id: data.image_id,
       ssh_host: '',
@@ -36,13 +38,18 @@ export const vmService = {
       esxi_moref: provisioned.moref,
     };
 
-    // 2. DB에 기록
+    // 2. DB 에 기록
     await db.insert(vms).values(newVm);
     return newVm;
   },
 
   async deleteVm(id: string) {
     await db.delete(vms).where(eq(vms.vm_id, id));
+    return true;
+  },
+
+  async updateVmStatus(id: string, status: string) {
+    await db.update(vms).set({ status, updated_at: new Date() }).where(eq(vms.vm_id, id));
     return true;
   },
 };
