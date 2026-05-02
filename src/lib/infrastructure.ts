@@ -17,6 +17,7 @@ interface VmCreateParams {
   network?: string;
   folder?: string;
   resource_pool?: string;
+  datastore?: string; // 데이터스토어 이름
 }
 
 interface VmResult {

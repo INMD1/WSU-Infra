@@ -2,7 +2,9 @@
 
 ## 개요
 
-이번 업데이트에서는 고급 govc 프로비저닝 로직을 구현하고, Content Library 통합, 자동 데이터스토어 선택, Cloud-init 지원 등 여러 기능을 추가했습니다.
+이번 업데이트에서는 고급 govc 프로비저닝 로직을 구현하고, Content Library 통합, 자동 데이터스토어 선택, Cloud-init 지원, **대기열 (Queue) 시스템** 등 여러 기능을 추가했습니다.
+
+**대기열 시스템**은 여러 사용자가 동시에 VM 프로비저닝을 요청할 때 순차적으로 처리하고, 동시성을 제어하며, 상태를 추적할 수 있도록 합니다.
 
 ---
 
@@ -339,13 +341,96 @@ await esxiClient.createVmFromTemplate({
 
 ---
 
-## 7. 추가된 파일
+## 7. 대기열 (Queue) 시스템
+
+### 7.1 개요
+
+여러 사용자가 동시에 VM 프로비저닝을 요청할 수 있으므로, **대기열 시스템**을 도입하여 다음과 같은 기능을 제공합니다:
+
+- **순차 처리**: 요청이 들어온 순서대로 처리
+- **동시성 제어**: 최대 동시 작업 수 제한 (기본: 2 개)
+- **우선순위**: 중요 요청 우선 처리
+- **자동 재시도**: 실패 시 자동 재시도 (기본: 3 회)
+- **시간 제한**: 각 작업에 시간 제한 적용 (기본: 5 분)
+- **상태 추적**: Job 상태 실시간 조회
+
+### 7.2 Job 인터페이스
+
+```typescript
+export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export interface Job<T = any> {
+  id: string;
+  type: string;
+  payload: T;
+  status: JobStatus;
+  priority: number;  // 낮을수록 우선순위 높음
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  error?: string;
+  result?: any;
+  retryCount: number;
+  maxRetries: number;
+  timeout?: number;  // ms 단위
+}
+```
+
+### 7.3 JobQueue 클래스
+
+```typescript
+import { JobQueue, JobData } from '@/lib/queue';
+
+const jobQueue = new JobQueue(maxConcurrent: number = 2);
+
+// Job 추가
+const job = jobQueue.add<VMCreateData>({
+  type: 'vm-create',
+  payload: { name: 'my-vm', ... },
+  priority: 0,      // 낮을수록 우선
+  timeout: 600000,  // 10 분
+  maxRetries: 1,
+});
+
+// 상태 조회
+const status = jobQueue.getStatus();
+const pendingJobs = jobQueue.getPendingJobs();
+const jobStatus = jobQueue.getJob(job.id);
+```
+
+### 7.4 대기열 상태
+
+```typescript
+export interface QueueStatus {
+  pending: number;   // 대기 중인 Job 수
+  running: number;   // 진행 중인 Job 수
+  completed: number; // 완료된 Job 수
+  failed: number;    // 실패한 Job 수
+  total: number;     // 총 Job 수
+}
+```
+
+### 7.5 상태 전이
+
+```
+[pending] ──▶ [running] ──▶ [completed]
+     ▲           │
+     │           └──▶ [failed] (재시도 가능)
+     └────────────┘
+```
+
+---
+
+## 8. 추가된 파일
 
 | 파일 경로 | 설명 |
 |-----------|------|
+| `src/lib/queue.ts` | **대기열 시스템** |
 | `src/services/imageService.ts` | 클라우드 이미지 관리 서비스 |
 | `src/app/api/images/route.ts` | 이미지 API 엔드포인트 |
 | `src/app/api/datastores/route.ts` | 데이터스토어 API 엔드포인트 |
+| `src/app/api/jobs/route.ts` | **대기열 상태 조회 API** |
+| `src/app/api/jobs/[id]/route.ts` | **개별 Job 상태 조회 API** |
 
 ---
 
@@ -358,7 +443,194 @@ await esxiClient.createVmFromTemplate({
 
 ---
 
-## 9. 환경 변수
+## 9. 수정된 파일
+
+| 파일 경로 | 수정 내용 |
+|-----------|-----------|
+| `src/lib/infrastructure.ts` | 타입 확장, govcStrategy 메서드 추가, esxiClient 확장 |
+| `src/services/vmService.ts` | **대기열 시스템 통합**, `ssh_public_key` 파라미터 전달 |
+| `src/app/api/vms/route.ts` | **대기열 기반 VM 생성** (비동기 처리) |
+
+---
+
+## 10. 대기열 관련 API 엔드포인트
+
+### 10.1 대기열 상태 조회
+
+#### 엔드포인트: `GET /api/jobs`
+
+대기열 전체 상태 조회
+
+**응답 예시:**
+
+```json
+{
+  "pending": 3,
+  "running": 2,
+  "completed": 15,
+  "failed": 1,
+  "total": 21
+}
+```
+
+**상세 정보 포함:**
+
+```bash
+GET /api/jobs?detail=true
+```
+
+```json
+{
+  "status": {
+    "pending": 3,
+    "running": 2,
+    "completed": 15,
+    "failed": 1,
+    "total": 21
+  },
+  "pendingJobs": [
+    {
+      "jobId": "vm-create-1714684800000-abc123",
+      "type": "vm-create",
+      "status": "pending",
+      "createdAt": "2026-05-02T10:00:00.000Z",
+      "priority": 0
+    }
+  ]
+}
+```
+
+### 10.2 개별 Job 상태 조회
+
+#### 엔드포인트: `GET /api/jobs/[id]`
+
+특정 Job 의 상세 상태 조회
+
+**응답 예시:**
+
+```json
+{
+  "success": true,
+  "jobId": "vm-create-1714684800000-abc123",
+  "type": "vm-create",
+  "status": "running",
+  "createdAt": "2026-05-02T10:00:00.000Z",
+  "startedAt": "2026-05-02T10:02:00.000Z",
+  "completedAt": null,
+  "error": null,
+  "result": null
+}
+```
+
+**완료된 Job:**
+
+```json
+{
+  "success": true,
+  "jobId": "vm-create-1714684800000-abc123",
+  "type": "vm-create",
+  "status": "completed",
+  "createdAt": "2026-05-02T10:00:00.000Z",
+  "startedAt": "2026-05-02T10:02:00.000Z",
+  "completedAt": "2026-05-02T10:05:00.000Z",
+  "error": null,
+  "result": {
+    "success": true,
+    "vm_id": "vm-123",
+    "name": "my-vm",
+    "message": "VM created successfully"
+  }
+}
+```
+
+---
+
+## 11. 확장된 VM 생성 API
+
+### 11.1 요청 방식 변경
+
+기존 방식은 직접 VM 을 생성했으나, 새로운 방식은 **대기열에 Job 을 추가**하고 즉시 반환합니다.
+
+**요청:**
+
+```bash
+POST /api/vms
+Content-Type: application/json
+
+{
+  "name": "my-vm",
+  "image_id": "ubuntu-24.04",
+  "vcpu": 2,
+  "ram_gb": 4,
+  "ssh_public_key": "ssh-rsa AAAA...",
+  "priority": 0  // 옵션: 낮을수록 우선 (기본: 0)
+}
+```
+
+**응답 (202 Accepted):**
+
+```json
+{
+  "success": true,
+  "jobId": "vm-create-1714684800000-abc123",
+  "message": "VM provisioning queued",
+  "estimatedWaitSeconds": 120,
+  "status": "queued"
+}
+```
+
+### 11.2 상태 확인
+
+```bash
+# Job 상태 확인
+GET /api/jobs/vm-create-1714684800000-abc123
+
+# 대기열 전체 상태 확인
+GET /api/jobs
+```
+
+### 11.3 프론트엔드 구현 예시
+
+```typescript
+// 1. VM 생성 요청
+const response = await fetch('/api/vms', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    name: 'my-vm',
+    image_id: 'ubuntu-24.04',
+    vcpu: 2,
+    ram_gb: 4,
+  }),
+});
+
+const { jobId, estimatedWaitSeconds } = await response.json();
+
+// 2. 상태 대기 (Polling)
+async function waitForJob(jobId: string) {
+  while (true) {
+    const response = await fetch(`/api/jobs/${jobId}`);
+    const status = await response.json();
+    
+    if (status.status === 'completed') {
+      return status.result;
+    }
+    
+    if (status.status === 'failed') {
+      throw new Error(status.error);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 5000)); // 5 초마다 확인
+  }
+}
+
+const result = await waitForJob(jobId);
+console.log('VM created:', result.vm_id);
+```
+
+---
+
+## 12. 환경 변수
 
 ### 기존 환경 변수
 
@@ -379,11 +651,12 @@ GOVC_DATACENTER=/ # 데이터센터 (기본: "/")
 ```bash
 DATASTORE_PREFIX=ds-    # 데이터스토어 선택 시 사용할 접두사 (기본: "ds-")
 ESXI_MODE=govc          # ESXi 연결 모드: "govc" 또는 "rest" (기본: "govc")
+QUEUE_MAX_CONCURRENT=2  # 대기열 최대 동시 작업 수 (기본: 2)
 ```
 
 ---
 
-## 10. 시스템 요구사항
+## 13. 시스템 요구사항
 
 ### Cloud-init ISO 생성을 위한 추가 의존성
 
@@ -395,9 +668,16 @@ sudo apt-get install genisoimage
 sudo apt-get install mkisofs
 ```
 
+### NPM 패키지
+
+```bash
+npm install uuid
+npm install @types/uuid --save-dev
+```
+
 ---
 
-## 11. 주의사항
+## 14. 주의사항
 
 1. **govc 명령어 설치 필요**: 모든 govc 기반 기능은 `govc` CLI 가 시스템 PATH 에 등록되어 있어야 합니다.
 
@@ -409,9 +689,54 @@ sudo apt-get install mkisofs
 
 5. **ISO 업로드**: 현재 구현에서는 로컬 ISO 를 데이터스토어로 업로드한 후 마운트합니다. 대용량 ISO 의 경우 업로드 시간이 소요될 수 있습니다.
 
+6. **대기열 동시성**: 기본값으로 최대 2 개 동시 작업이 가능합니다. `QUEUE_MAX_CONCURRENT` 환경 변수로 변경 가능합니다.
+
+7. **Job 시간 제한**: 각 Job 에 기본 5 분의 시간 제한이 적용됩니다. 초과 시 자동으로 실패 처리됩니다.
+
+8. **재시도 로직**: 실패한 Job 은 최대 3 회 자동 재시도됩니다.
+
+9. **In-memory 대기열**: 현재 대기열은 In-memory 로 구현되어 있어 서버 재시작 시 상태가 초기화됩니다. 영속성이 필요한 경우 Redis 등의 외부 저장소로 확장 가능합니다.
+
 ---
 
-## 12. 테스트 방법
+## 15. 테스트 방법
+
+### 대기열 상태 조회 테스트
+
+```bash
+# 기본 상태 조회
+curl http://localhost:3000/api/jobs
+
+# 상세 정보 포함
+curl "http://localhost:3000/api/jobs?detail=true"
+```
+
+### VM 생성 (대기열) 테스트
+
+```bash
+# 1. VM 생성 요청
+curl -X POST http://localhost:3000/api/vms \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "test-vm-001",
+    "image_id": "ubuntu-24.04",
+    "vcpu": 2,
+    "ram_gb": 4,
+    "ssh_public_key": "ssh-rsa AAAA..."
+  }'
+
+# 응답 예시:
+# {
+#   "success": true,
+#   "jobId": "vm-create-1714684800000-abc123",
+#   "message": "VM provisioning queued",
+#   "estimatedWaitSeconds": 0,
+#   "status": "queued"
+# }
+
+# 2. Job 상태 확인 (반복)
+curl http://localhost:3000/api/jobs/vm-create-1714684800000-abc123
+```
 
 ### 데이터스토어 목록 조회 테스트
 
@@ -441,4 +766,4 @@ curl "http://localhost:3000/api/images?library=Ubuntu%20Images"
 
 | 날짜 | 변경 내용 |
 |------|----------|
-| 2026-05-02 | 고급 govc 프로비저닝 로직 구현, Content Library 통합, 자동 데이터스토어 선택, Cloud-init 지원 추가 |
+| 2026-05-02 | 고급 govc 프로비저닝 로직 구현, Content Library 통합, 자동 데이터스토어 선택, Cloud-init 지원, **대기열 시스템** 추가 |
