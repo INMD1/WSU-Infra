@@ -13,11 +13,11 @@ interface VmCreateParams {
   vcpu: number;
   ram_gb: number;
   ssh_public_key?: string;
-  iso_path?: string; // 외부에서 제공하거나 내부에서 생성
+  password?: string;
   network?: string;
   folder?: string;
   resource_pool?: string;
-  datastore?: string; // 데이터스토어 이름
+  datastore?: string;
 }
 
 interface VmResult {
@@ -71,10 +71,14 @@ const govcStrategy = {
     };
   },
 
-  /**
-   * 용량 기반으로 최적의 Datastore 자동 선택
-   */
   async selectBestDatastore(prefix = 'ds-', minFreeGb = 20): Promise<string> {
+    // GOVC_DATASTORE가 설정된 경우 그대로 사용 (StoragePod 포함).
+    // govc vm.clone은 StoragePod 이름을 받으면 Storage DRS가 내부 배치를 결정한다.
+    if (process.env.GOVC_DATASTORE) {
+      console.log(`[govc] Using configured datastore/StoragePod: ${process.env.GOVC_DATASTORE}`);
+      return process.env.GOVC_DATASTORE;
+    }
+
     const env = this.getEnv();
     const { stdout } = await execPromise(`govc datastore.info -json`, { env });
     const data = JSON.parse(stdout);
@@ -82,27 +86,54 @@ const govcStrategy = {
     const candidates = data.Datastores
       .map((ds: any) => ({
         name: ds.Info.Name,
-        freeSpaceGb: ds.Info.FreeSpace / (1024 ** 3)
+        freeSpaceGb: ds.Info.FreeSpace / (1024 ** 3),
       }))
       .filter((ds: any) => ds.name.startsWith(prefix) && ds.freeSpaceGb >= minFreeGb)
       .sort((a: any, b: any) => b.freeSpaceGb - a.freeSpaceGb);
 
     if (candidates.length === 0) {
-      throw new Error(`No suitable datastore found with prefix ${prefix} and ${minFreeGb}GB free space.`);
+      throw new Error(`No suitable datastore found with prefix '${prefix}' and ${minFreeGb}GB free.`);
     }
 
     console.log(`[govc] Selected datastore: ${candidates[0].name} (${candidates[0].freeSpaceGb.toFixed(2)}GB free)`);
     return candidates[0].name;
   },
 
-  /**
-   * 모든 Datastore 정보 조회 (사용률 기반 정렬)
-   */
   async listDatastores(): Promise<DatastoreInfo[]> {
     const env = this.getEnv();
+
+    // GOVC_DATASTORE가 StoragePod(Datastore Cluster)인 경우 cluster.info로 조회.
+    // govc datastore.info는 StoragePod를 개별 DS로 노출하지 않는다.
+    if (process.env.GOVC_DATASTORE) {
+      try {
+        const { stdout } = await execPromise(
+          `govc datastore.cluster.info -json "${process.env.GOVC_DATASTORE}"`,
+          { env }
+        );
+        const data = JSON.parse(stdout);
+        const pods: any[] = data?.StoragePods ?? [];
+        if (pods.length > 0) {
+          return pods.map((pod: any) => {
+            const capacityGb = (pod.Summary?.Capacity ?? 0) / (1024 ** 3);
+            const freeGb = (pod.Summary?.FreeSpace ?? 0) / (1024 ** 3);
+            return {
+              name: pod.Name ?? process.env.GOVC_DATASTORE!,
+              capacity_gb: Math.round(capacityGb * 100) / 100,
+              free_gb: Math.round(freeGb * 100) / 100,
+              usage_percent: capacityGb > 0
+                ? Math.round(((capacityGb - freeGb) / capacityGb) * 10000) / 100
+                : 0,
+              type: 'StoragePod',
+            };
+          });
+        }
+      } catch {
+        // cluster.info 미지원 또는 단일 DS인 경우 — 아래 일반 조회로 fall-through
+      }
+    }
+
     const { stdout } = await execPromise(`govc datastore.info -json`, { env });
     const data = JSON.parse(stdout);
-
     return data.Datastores.map((ds: any) => {
       const capacityGb = ds.Info.Capacity / (1024 ** 3);
       const freeGb = ds.Info.FreeSpace / (1024 ** 3);
@@ -110,27 +141,56 @@ const govcStrategy = {
         name: ds.Info.Name,
         capacity_gb: Math.round(capacityGb * 100) / 100,
         free_gb: Math.round(freeGb * 100) / 100,
-        usage_percent: Math.round(((capacityGb - freeGb) / capacityGb) * 100 * 100) / 100,
-        type: ds.Info.Type || 'unknown'
+        usage_percent: Math.round(((capacityGb - freeGb) / capacityGb) * 10000) / 100,
+        type: ds.Info.Type || 'unknown',
       };
     }).sort((a: DatastoreInfo, b: DatastoreInfo) => a.name.localeCompare(b.name));
   },
 
-  /**
-   * Cloud-init ISO 자동 생성 (genisoimage/mkisofs 필요)
-   */
-  async createCloudInitIso(vmName: string, sshKey: string): Promise<string> {
+  // cloud-config YAML 생성 — 비밀번호, SSH 키, apt 미러를 한곳에서 관리
+  buildCloudInitUserData(vmName: string, sshKey?: string, password?: string): string {
+    const mirror = process.env.CLOUD_INIT_APT_MIRROR;
+    const lines: string[] = ['#cloud-config', ''];
+
+    lines.push('users:');
+    lines.push('  - name: ubuntu');
+    lines.push('    sudo: ALL=(ALL) NOPASSWD:ALL');
+    lines.push('    shell: /bin/bash');
+    lines.push('    lock_passwd: false');
+    if (sshKey) {
+      lines.push('    ssh_authorized_keys:');
+      lines.push(`      - ${sshKey}`);
+    }
+
+    if (password) {
+      lines.push('');
+      lines.push('ssh_pwauth: true');
+      lines.push('chpasswd:');
+      lines.push('  expire: false');
+      lines.push('  list: |');
+      lines.push(`    ubuntu:${password}`);
+    }
+
+    if (mirror) {
+      lines.push('');
+      lines.push('apt:');
+      lines.push('  primary:');
+      lines.push('    - arches: [default]');
+      lines.push(`      uri: ${mirror}`);
+      lines.push('  security:');
+      lines.push('    - arches: [default]');
+      lines.push(`      uri: ${mirror}`);
+    }
+
+    return lines.join('\n') + '\n';
+  },
+
+  // ISO 방식 (genisoimage 필요, StoragePod 환경에서는 GOVC_ISO_DATASTORE 별도 설정 필요)
+  async createCloudInitIso(vmName: string, sshKey?: string, password?: string): Promise<string> {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `cloudinit-${vmName}-`));
     const isoPath = path.join(os.tmpdir(), `${vmName}-cidata.iso`);
 
-    const userData = `#cloud-config
-users:
-  - name: ubuntu
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - ${sshKey}
-`;
+    const userData = this.buildCloudInitUserData(vmName, sshKey, password);
     const metaData = `instance-id: ${vmName}\nhostname: ${vmName}\n`;
     const networkConfig = `version: 2\nethernets:\n  ens160:\n    dhcp4: true\n`;
 
@@ -138,45 +198,30 @@ users:
     await fs.writeFile(path.join(tmpDir, 'meta-data'), metaData);
     await fs.writeFile(path.join(tmpDir, 'network-config'), networkConfig);
 
-    // genisoimage 또는 mkisofs 필요
-    await execPromise(`genisoimage -output ${isoPath} -volid cidata -joliet -rock ${tmpDir}/user-data ${tmpDir}/meta-data ${tmpDir}/network-config`);
-
-    // 임시 디렉토리 삭제
+    await execPromise(
+      `genisoimage -output "${isoPath}" -volid cidata -joliet -rock` +
+      ` "${tmpDir}/user-data" "${tmpDir}/meta-data" "${tmpDir}/network-config"`
+    );
     await fs.rm(tmpDir, { recursive: true, force: true });
     return isoPath;
   },
 
-  /**
-   * VM에 Cloud-init 정보를 ExtraConfig 방식으로 인젝션
-   * (ISO 없이 guestinfo 속성을 통한 경량 방식)
-   */
-  async injectCloudInitViaExtraConfig(vmName: string, sshKey: string): Promise<void> {
+  // ExtraConfig 방식 (ISO 불필요, StoragePod 환경에서 권장)
+  // cloud-config YAML을 base64로 인코딩해 guestinfo에 주입 — VMware datasource가 부팅 시 읽음
+  async injectCloudInitViaExtraConfig(vmName: string, sshKey?: string, password?: string): Promise<void> {
     const env = this.getEnv();
+    const userData = this.buildCloudInitUserData(vmName, sshKey, password);
+    const metaData = `instance-id: ${vmName}\nhostname: ${vmName}\n`;
 
-    const userData = {
-      users: [{
-        name: 'ubuntu',
-        sudo: 'ALL=(ALL) NOPASSWD:ALL',
-        shell: '/bin/bash',
-        ssh_authorized_keys: [sshKey]
-      }]
-    };
+    const userDataB64 = Buffer.from(userData).toString('base64');
+    const metaDataB64 = Buffer.from(metaData).toString('base64');
 
-    const metaData = {
-      instance_id: vmName,
-      hostname: vmName
-    };
-
-    const userDataB64 = Buffer.from(JSON.stringify(userData)).toString('base64');
-    const metaDataB64 = Buffer.from(JSON.stringify(metaData)).toString('base64');
-
-    // govc vm.update 로 ExtraConfig 설정
     await execPromise(
-      `govc vm.update -vm="${vmName}" ` +
-      `-e="guestinfo.userdata=${userDataB64}" ` +
-      `-e="guestinfo.userdata.encoding=base64" ` +
-      `-e="guestinfo.metadata=${metaDataB64}" ` +
-      `-e="guestinfo.metadata.encoding=base64"`,
+      `govc vm.change -vm="${vmName}"` +
+      ` -e guestinfo.userdata="${userDataB64}"` +
+      ` -e guestinfo.userdata.encoding=base64` +
+      ` -e guestinfo.metadata="${metaDataB64}"` +
+      ` -e guestinfo.metadata.encoding=base64`,
       { env }
     );
   },
@@ -188,36 +233,39 @@ users:
     let isoPath = '';
 
     try {
-      // Use caller-provided datastore or auto-select
       const datastore = params.datastore || await this.selectBestDatastore(process.env.DATASTORE_PREFIX || 'ds-');
+      const needsCloudInit = params.ssh_public_key || params.password || process.env.CLOUD_INIT_APT_MIRROR;
+      const useIso = process.env.CLOUD_INIT_METHOD === 'iso';
 
-      // 2. Cloud-init ISO 생성 (SSH 키가 제공된 경우)
-      if (params.ssh_public_key) {
-        isoPath = await this.createCloudInitIso(params.name, params.ssh_public_key);
-      }
-
-      // 3. VM Clone
+      // VM Clone
       console.log(`[govc] Cloning VM: ${params.name} from ${params.template}...`);
       const poolFlag = env.GOVC_RESOURCE_POOL ? `-pool="${env.GOVC_RESOURCE_POOL}"` : '';
       const folderFlag = env.GOVC_FOLDER ? `-folder="${env.GOVC_FOLDER}"` : '';
-      
-      await execPromise(`govc vm.clone -vm="${params.template}" -ds="${datastore}" ${poolFlag} ${folderFlag} -on=false "${params.name}"`, { env });
+      await execPromise(
+        `govc vm.clone -vm="${params.template}" -ds="${datastore}" ${poolFlag} ${folderFlag} -on=false "${params.name}"`,
+        { env }
+      );
 
-      // 4. Resource & Network Update
+      // Resource & Network
       console.log(`[govc] Configuring resources and network...`);
       await execPromise(`govc vm.change -vm="${params.name}" -c=${params.vcpu} -m=${ramMb}`, { env });
-      
-      // 네트워크 설정 (기본 인터페이스 ens160을 위한 포트그룹 연결)
       const network = params.network || env.GOVC_NETWORK;
       await execPromise(`govc device.network.change -vm="${params.name}" -net="${network}" ethernet-0`, { env });
 
-      // 5. Cloud-init ISO 삽입
-      if (isoPath) {
-        // ISO를 데이터스토어로 업로드 (선택사항, 여기서는 로컬 경로 사용 가정하거나 데이터스토어 경로 필요)
-        // 실제 운영 환경에서는 govc datastore.upload 필요
-        const remoteIsoPath = `cloud-init/${params.name}.iso`;
-        await execPromise(`govc datastore.upload -ds="${datastore}" ${isoPath} ${remoteIsoPath}`, { env });
-        await execPromise(`govc device.cdrom.insert -vm="${params.name}" -ds="${datastore}" ${remoteIsoPath}`, { env });
+      // Cloud-init 주입
+      // ExtraConfig가 기본 (ISO 불필요, StoragePod 호환)
+      // CLOUD_INIT_METHOD=iso 설정 시에만 ISO 방식 사용
+      if (needsCloudInit) {
+        if (useIso) {
+          isoPath = await this.createCloudInitIso(params.name, params.ssh_public_key, params.password);
+          const isoDs = process.env.GOVC_ISO_DATASTORE || datastore;
+          const remoteIsoPath = `cloud-init/${params.name}.iso`;
+          await execPromise(`govc datastore.upload -ds="${isoDs}" "${isoPath}" "${remoteIsoPath}"`, { env });
+          await execPromise(`govc device.cdrom.insert -vm="${params.name}" -ds="${isoDs}" "${remoteIsoPath}"`, { env });
+        } else {
+          console.log(`[govc] Injecting cloud-init via ExtraConfig...`);
+          await this.injectCloudInitViaExtraConfig(params.name, params.ssh_public_key, params.password);
+        }
       }
 
       // 6. Power On
@@ -397,12 +445,12 @@ export const esxiClient = {
   },
 
   // Cloud-init 관련
-  async createCloudInitIso(vmName: string, sshKey: string): Promise<string> {
-    return await this.strategy.createCloudInitIso(vmName, sshKey);
+  async createCloudInitIso(vmName: string, sshKey?: string, password?: string): Promise<string> {
+    return await this.strategy.createCloudInitIso(vmName, sshKey, password);
   },
 
-  async injectCloudInitViaExtraConfig(vmName: string, sshKey: string): Promise<void> {
-    return await this.strategy.injectCloudInitViaExtraConfig(vmName, sshKey);
+  async injectCloudInitViaExtraConfig(vmName: string, sshKey?: string, password?: string): Promise<void> {
+    return await this.strategy.injectCloudInitViaExtraConfig(vmName, sshKey, password);
   },
 
   // Content Library 관련

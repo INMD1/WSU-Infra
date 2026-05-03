@@ -18,6 +18,7 @@ async function processVmCreateJob(jobData: any): Promise<any> {
       vcpu: data.vcpu,
       ram_gb: data.ram_gb,
       ssh_public_key: data.ssh_public_key,
+      password: data.password,
     });
 
     console.log(`[VM Service] VM provisioned: ${provisioned.vm_id}`);
