@@ -10,6 +10,7 @@ export interface VM {
   ssh_port: number;
   internal_ip: string;
   esxi_moref?: string;
+  port_forwards?: PortForward[];
   created_at: string;
   updated_at?: string;
 }
@@ -29,4 +30,16 @@ export interface Usage {
   ram_gb_total: number;
   disk_gb_total: number;
   ports_used: number;
+}
+
+export interface PortForward {
+  id: string;
+  vm_id?: string;
+  protocol: string;
+  internal_ip: string;
+  internal_port: number;
+  external_ip: string;
+  external_port: number;
+  description?: string;
+  created_at: string;
 }

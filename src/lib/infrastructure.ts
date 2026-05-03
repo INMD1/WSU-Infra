@@ -188,8 +188,8 @@ users:
     let isoPath = '';
 
     try {
-      // 1. 데이터스토어 자동 선택
-      const datastore = await this.selectBestDatastore(process.env.DATASTORE_PREFIX || 'ds-');
+      // Use caller-provided datastore or auto-select
+      const datastore = params.datastore || await this.selectBestDatastore(process.env.DATASTORE_PREFIX || 'ds-');
 
       // 2. Cloud-init ISO 생성 (SSH 키가 제공된 경우)
       if (params.ssh_public_key) {
@@ -423,13 +423,125 @@ export const esxiClient = {
   }
 };
 
+export interface PortForwardParams {
+  internalIp: string;
+  internalPort: number;
+  externalPort: number;
+  protocol?: string;
+  description?: string;
+}
+
+export interface PortForwardResult {
+  tracker: string;
+  externalIp: string;
+  externalPort: number;
+  internalIp: string;
+  internalPort: number;
+  protocol: string;
+}
+
+export interface PfSenseNatRule {
+  tracker: string;
+  interface: string;
+  protocol: string;
+  target: string;
+  'local-port': string;
+  dstport: string;
+  descr: string;
+}
+
 export const pfsenseClient = {
-  getUrl() { return process.env.PFSENSE_URL || 'https://localhost'; },
-  getInsecure() { return process.env.PFSENSE_INSECURE === 'true' || process.env.PFSENSE_INSECURE === '1'; },
-  async addPortForward(internalIp: string, externalPort: number) {
-    const url = this.getUrl();
-    if (this.getInsecure()) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    console.log(`[pfSense] (${url}) Port forwarding added: ${externalPort} -> ${internalIp}:22`);
-  }
+  getUrl(): string {
+    return process.env.PFSENSE_URL || '';
+  },
+
+  getWanIp(): string {
+    return process.env.PFSENSE_WAN_IP || '';
+  },
+
+  getHeaders(): Record<string, string> {
+    const clientId = process.env.PFSENSE_API_CLIENT_ID || '';
+    const apiKey = process.env.PFSENSE_API_KEY || '';
+    const auth = clientId ? `${clientId} ${apiKey}` : apiKey;
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': auth,
+    };
+  },
+
+  assertConfigured() {
+    if (!this.getUrl()) throw new Error('PFSENSE_URL is not configured');
+    if (!process.env.PFSENSE_API_KEY) throw new Error('PFSENSE_API_KEY is not configured');
+  },
+
+  // Scoped TLS override: restore the original value after the request completes.
+  // NODE_TLS_REJECT_UNAUTHORIZED is process-global, so we save/restore to avoid
+  // permanently disabling verification for all other concurrent HTTPS connections.
+  async fetchWithTls(url: string, options: RequestInit = {}): Promise<Response> {
+    const insecure = process.env.PFSENSE_INSECURE === 'true' || process.env.PFSENSE_INSECURE === '1';
+    if (!insecure) return fetch(url, { ...options, headers: this.getHeaders() });
+
+    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    try {
+      return await fetch(url, { ...options, headers: this.getHeaders() });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      } else {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+      }
+    }
+  },
+
+  async listPortForwards(): Promise<PfSenseNatRule[]> {
+    this.assertConfigured();
+    const res = await this.fetchWithTls(`${this.getUrl()}/api/v2/firewall/nat/port_forwards`);
+    const json = await res.json() as any;
+    if (json.code !== 200) throw new Error('pfSense NAT list failed');
+    return (json.data as PfSenseNatRule[]) || [];
+  },
+
+  async addPortForward(params: PortForwardParams): Promise<PortForwardResult> {
+    this.assertConfigured();
+    const protocol = params.protocol || 'tcp';
+    const res = await this.fetchWithTls(`${this.getUrl()}/api/v2/firewall/nat/port_forward`, {
+      method: 'POST',
+      body: JSON.stringify({
+        interface: 'wan',
+        ipprotocol: 'inet',
+        protocol,
+        source: 'any',
+        source_port: 'any',
+        destination: 'wanaddress',
+        destination_port: String(params.externalPort),
+        target: params.internalIp,
+        local_port: String(params.internalPort),
+        descr: params.description || `Forward ${params.internalIp}:${params.internalPort}`,
+        associated_rule_id: 'pass',
+      }),
+    });
+    const json = await res.json() as any;
+    if (json.code !== 200) throw new Error('pfSense NAT rule creation failed');
+
+    return {
+      tracker: json.data.tracker || json.data.id,
+      externalIp: this.getWanIp(),
+      externalPort: params.externalPort,
+      internalIp: params.internalIp,
+      internalPort: params.internalPort,
+      protocol,
+    };
+  },
+
+  async deletePortForward(id: string): Promise<void> {
+    this.assertConfigured();
+    const res = await this.fetchWithTls(
+      `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+    const json = await res.json() as any;
+    if (json.code !== 200) throw new Error('pfSense NAT rule deletion failed');
+  },
 };
 

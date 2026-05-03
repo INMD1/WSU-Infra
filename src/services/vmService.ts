@@ -1,6 +1,6 @@
 import { db } from '../db';
-import { vms } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { vms, portForwards } from '../db/schema';
+import { eq, inArray } from 'drizzle-orm';
 import { esxiClient } from '../lib/infrastructure';
 import { jobQueue, JobData } from '../lib/queue';
 
@@ -8,37 +8,21 @@ import { jobQueue, JobData } from '../lib/queue';
  * VM 생성 Job 처리
  */
 async function processVmCreateJob(jobData: any): Promise<any> {
-  const { data, jobId } = jobData;
+  const { data } = jobData;
 
   try {
-    console.log(`[VM Service] Starting VM creation job ${jobId}`);
-
-    // 1. 데이터스토어 자동 선택
-    const datastore = await esxiClient.selectBestDatastore('ds-', 20);
-    console.log(`[VM Service] Selected datastore: ${datastore}`);
-
-    // 2. Cloud-init ISO 생성 (SSH 키 제공된 경우)
-    let isoPath: string | undefined;
-    if (data.ssh_public_key) {
-      isoPath = await esxiClient.createCloudInitIso(data.name, data.ssh_public_key);
-      console.log(`[VM Service] Created Cloud-init ISO: ${isoPath}`);
-    }
-
-    // 3. VM 프로비저닝
+    // createVmFromTemplate handles datastore selection and Cloud-init internally
     const provisioned = await esxiClient.createVmFromTemplate({
       name: data.name,
       template: data.image_id,
       vcpu: data.vcpu,
       ram_gb: data.ram_gb,
       ssh_public_key: data.ssh_public_key,
-      iso_path: isoPath,
-      datastore,
     });
 
     console.log(`[VM Service] VM provisioned: ${provisioned.vm_id}`);
 
-    // 4. DB 에 기록
-    const newVm = {
+    await db.insert(vms).values({
       vm_id: provisioned.vm_id,
       name: data.name,
       status: provisioned.status as any,
@@ -47,24 +31,11 @@ async function processVmCreateJob(jobData: any): Promise<any> {
       ssh_public_key: data.ssh_public_key,
       disk_gb: data.disk_gb,
       image_id: data.image_id,
-      ssh_host: '',
-      ssh_port: 0,
-      internal_ip: '',
+      ssh_host: provisioned.ip_address || '',
+      ssh_port: 22,
+      internal_ip: provisioned.ip_address || '',
       esxi_moref: provisioned.moref,
-      job_id: jobId,
-    };
-
-    await db.insert(vms).values(newVm);
-
-    // 5. 임시 ISO 파일 정리
-    if (isoPath) {
-      try {
-        const fs = require('fs');
-        fs.unlinkSync(isoPath);
-      } catch (e) {
-        console.warn(`[VM Service] Failed to remove ISO: ${isoPath}`);
-      }
-    }
+    });
 
     return {
       success: true,
@@ -74,17 +45,6 @@ async function processVmCreateJob(jobData: any): Promise<any> {
     };
   } catch (error: any) {
     console.error(`[VM Service] VM creation failed:`, error.message);
-
-    // 롤백: 생성된 VM 파괴
-    if (error.provisionedVm) {
-      try {
-        await esxiClient.powerOff(error.provisionedVm);
-        console.log(`[VM Service] Rolled back VM: ${error.provisionedVm}`);
-      } catch (rollbackError) {
-        console.error(`[VM Service] Rollback failed:`, rollbackError);
-      }
-    }
-
     throw error;
   }
 }
@@ -94,12 +54,35 @@ async function processVmCreateJob(jobData: any): Promise<any> {
  */
 export const vmService = {
   async getAllVms() {
-    return await db.select().from(vms);
+    const allVms = await db.select().from(vms);
+    if (allVms.length === 0) return [];
+
+    const vmIds = allVms.map(v => v.vm_id);
+    const allPortForwards = await db
+      .select()
+      .from(portForwards)
+      .where(inArray(portForwards.vm_id, vmIds));
+
+    return allVms.map(vm => ({
+      ...vm,
+      port_forwards: allPortForwards.filter(pf => pf.vm_id === vm.vm_id),
+    }));
   },
 
   async getVmById(id: string) {
     const result = await db.select().from(vms).where(eq(vms.vm_id, id));
-    return result[0] || null;
+    if (result.length === 0) return null;
+    
+    const vm = result[0];
+    const vmPortForwards = await db
+      .select()
+      .from(portForwards)
+      .where(eq(portForwards.vm_id, id));
+
+    return {
+      ...vm,
+      port_forwards: vmPortForwards,
+    };
   },
 
   /**
@@ -107,25 +90,22 @@ export const vmService = {
    * @returns Job ID
    */
   async createVm(data: any, priority: number = 0): Promise<{ jobId: string; estimatedWait: number }> {
-    const jobId = `vm-create-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-    // 대기 중인 Job 수 확인
     const pendingCount = jobQueue.getPendingJobs().length;
-    const estimatedWait = pendingCount * 120; // 평균 2 분씩 예상
+    const runningCount = jobQueue.getRunningJobs().length;
+    const slotsAvailable = Math.max(0, 3 - runningCount);
+    const queuePosition = Math.max(0, pendingCount - slotsAvailable + 1);
+    const estimatedWait = queuePosition * 120;
 
-    // Job 추가
-    const jobData: JobData = {
+    const job = jobQueue.add({
       type: 'vm-create',
-      payload: { data, jobId },
+      payload: { data },
       priority,
-      timeout: 600000, // 10 분
+      timeout: 600000,
       maxRetries: 1,
-    };
-
-    jobQueue.add(jobData);
+    });
 
     return {
-      jobId,
+      jobId: job.id,
       estimatedWait,
     };
   },

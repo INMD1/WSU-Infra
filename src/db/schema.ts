@@ -1,4 +1,4 @@
-import { mysqlTable, varchar, int, timestamp, text, json, decimal } from 'drizzle-orm/mysql-core';
+import { mysqlTable, varchar, int, timestamp, text } from 'drizzle-orm/mysql-core';
 
 export const users = mysqlTable('users', {
   id: varchar('id', { length: 36 }).primaryKey(),
@@ -25,6 +25,21 @@ export const vms = mysqlTable('vms', {
   owner_id: varchar('owner_id', { length: 36 }).references(() => users.id),
   created_at: timestamp('created_at').defaultNow(),
   updated_at: timestamp('updated_at').onUpdateNow(),
+});
+
+export const portForwards = mysqlTable('port_forwards', {
+  id: varchar('id', { length: 36 }).primaryKey(),
+  vm_id: varchar('vm_id', { length: 36 }).references(() => vms.vm_id),
+  owner_id: varchar('owner_id', { length: 36 }).references(() => users.id),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  protocol: varchar('protocol', { length: 10 }).notNull().default('tcp'),
+  internal_ip: varchar('internal_ip', { length: 50 }).notNull(),
+  internal_port: int('internal_port').notNull(),
+  external_ip: varchar('external_ip', { length: 50 }).notNull(),
+  external_port: int('external_port').notNull().unique(),
+  pfsense_tracker: varchar('pfsense_tracker', { length: 255 }),
+  description: varchar('description', { length: 255 }),
+  created_at: timestamp('created_at').defaultNow(),
 });
 
 export const quotas = mysqlTable('quotas', {
