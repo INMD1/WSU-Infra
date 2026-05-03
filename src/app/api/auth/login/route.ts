@@ -1,37 +1,58 @@
 import { NextResponse } from 'next/server';
 import { signToken } from '@/lib/auth';
+import { db } from '@/db';
+import { users } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 
 /**
- * 1.1 로그인 - JWT 토큰 발급
  * POST /api/auth/login
+ *
+ * 학생: { student_id }           → DB에서 학번 확인 후 JWT 발급
+ * 관리자: { student_id, password } → 환경변수(ADMIN_USERNAME/ADMIN_PASSWORD) 대조
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { username, password } = body;
+    const { student_id, password } = body;
 
-    // 실제 환경에서는 DB에서 사용자 확인을 해야 합니다.
-    // 여기서는 간단한 예시로 처리합니다.
-    if (username === 'admin' && password === 'password123') {
-      const accessToken = signToken({ username, role: 'admin' }, '1h');
-      const refreshToken = signToken({ username }, '7d');
-
-      return NextResponse.json({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        expires_in: 3600,
-        token_type: 'Bearer',
-      });
+    if (!student_id || typeof student_id !== 'string' || student_id.trim() === '') {
+      return NextResponse.json({ message: '학번을 입력해주세요.' }, { status: 400 });
     }
 
-    return NextResponse.json(
-      { message: 'Invalid credentials' },
-      { status: 401 }
-    );
+    const sid = student_id.trim();
+
+    // 관리자 로그인 (password 필드가 있을 때)
+    if (password !== undefined) {
+      const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (!adminPassword) {
+        return NextResponse.json(
+          { message: '서버에 ADMIN_PASSWORD가 설정되지 않았습니다.' },
+          { status: 500 }
+        );
+      }
+
+      if (sid === adminUsername && password === adminPassword) {
+        const token = signToken({ userId: 'admin', username: sid, role: 'admin' }, '8h');
+        return NextResponse.json({ access_token: token, role: 'admin', username: sid });
+      }
+
+      return NextResponse.json({ message: '관리자 정보가 올바르지 않습니다.' }, { status: 401 });
+    }
+
+    // 학생 로그인 (학번만)
+    const result = await db.select().from(users).where(eq(users.username, sid));
+    if (result.length === 0 || result[0].role !== 'user') {
+      return NextResponse.json({ message: '등록되지 않은 학번입니다.' }, { status: 401 });
+    }
+
+    const user = result[0];
+    const token = signToken({ userId: user.id, username: sid, role: 'user' }, '8h');
+    return NextResponse.json({ access_token: token, role: 'user', username: sid });
+
   } catch (error) {
-    return NextResponse.json(
-      { message: 'Internal Server Error' },
-      { status: 500 }
-    );
+    console.error('[Auth] Login error:', error);
+    return NextResponse.json({ message: 'Internal Server Error' }, { status: 500 });
   }
 }

@@ -21,6 +21,7 @@ export const vms = mysqlTable('vms', {
   internal_ip: varchar('internal_ip', { length: 50 }),
   esxi_moref: varchar('esxi_moref', { length: 255 }),
   ssh_public_key: text('ssh_public_key'),
+  vm_password: varchar('vm_password', { length: 255 }),
   job_id: varchar('job_id', { length: 100 }),
   owner_id: varchar('owner_id', { length: 36 }).references(() => users.id),
   created_at: timestamp('created_at').defaultNow(),

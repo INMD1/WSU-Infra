@@ -1,24 +1,30 @@
+import crypto from 'crypto';
 import { db } from '../db';
 import { vms, portForwards } from '../db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { esxiClient } from '../lib/infrastructure';
 import { jobQueue, JobData } from '../lib/queue';
 
+function generateVmPassword(): string {
+  // 12자 URL-safe base64 (쉘 특수문자 없음)
+  return crypto.randomBytes(9).toString('base64url');
+}
+
 /**
  * VM 생성 Job 처리
  */
 async function processVmCreateJob(jobData: any): Promise<any> {
   const { data } = jobData;
+  const vmPassword = data.password || generateVmPassword();
 
   try {
-    // createVmFromTemplate handles datastore selection and Cloud-init internally
     const provisioned = await esxiClient.createVmFromTemplate({
       name: data.name,
       template: data.image_id,
       vcpu: data.vcpu,
       ram_gb: data.ram_gb,
       ssh_public_key: data.ssh_public_key,
-      password: data.password,
+      password: vmPassword,
     });
 
     console.log(`[VM Service] VM provisioned: ${provisioned.vm_id}`);
@@ -29,13 +35,15 @@ async function processVmCreateJob(jobData: any): Promise<any> {
       status: provisioned.status as any,
       vcpu: data.vcpu,
       ram_gb: data.ram_gb,
-      ssh_public_key: data.ssh_public_key,
       disk_gb: data.disk_gb,
       image_id: data.image_id,
       ssh_host: provisioned.ip_address || '',
       ssh_port: 22,
       internal_ip: provisioned.ip_address || '',
       esxi_moref: provisioned.moref,
+      ssh_public_key: data.ssh_public_key,
+      vm_password: vmPassword,
+      owner_id: data.owner_id || null,
     });
 
     return {
@@ -54,8 +62,15 @@ async function processVmCreateJob(jobData: any): Promise<any> {
  * VM 서비스
  */
 export const vmService = {
-  async getAllVms() {
-    const allVms = await db.select().from(vms);
+  /**
+   * VM 목록 조회
+   * ownerId가 있으면 해당 사용자 VM만, 없으면 전체 (관리자용)
+   */
+  async getAllVms(ownerId?: string) {
+    const allVms = ownerId
+      ? await db.select().from(vms).where(eq(vms.owner_id, ownerId))
+      : await db.select().from(vms);
+
     if (allVms.length === 0) return [];
 
     const vmIds = allVms.map(v => v.vm_id);
@@ -73,7 +88,7 @@ export const vmService = {
   async getVmById(id: string) {
     const result = await db.select().from(vms).where(eq(vms.vm_id, id));
     if (result.length === 0) return null;
-    
+
     const vm = result[0];
     const vmPortForwards = await db
       .select()
@@ -86,10 +101,6 @@ export const vmService = {
     };
   },
 
-  /**
-   * VM 생성 (대기열 사용)
-   * @returns Job ID
-   */
   async createVm(data: any, priority: number = 0): Promise<{ jobId: string; estimatedWait: number }> {
     const pendingCount = jobQueue.getPendingJobs().length;
     const runningCount = jobQueue.getRunningJobs().length;
@@ -105,20 +116,12 @@ export const vmService = {
       maxRetries: 1,
     });
 
-    return {
-      jobId: job.id,
-      estimatedWait,
-    };
+    return { jobId: job.id, estimatedWait };
   },
 
-  /**
-   * Job 상태 조회
-   */
   async getJobStatus(jobId: string) {
     const job = jobQueue.getJob(jobId);
-    if (!job) {
-      return null;
-    }
+    if (!job) return null;
 
     return {
       jobId: job.id,
@@ -142,16 +145,10 @@ export const vmService = {
     return true;
   },
 
-  /**
-   * 대기열 상태 조회
-   */
   getQueueStatus() {
     return jobQueue.getStatus();
   },
 
-  /**
-   * 대기 중인 Job 목록 조회
-   */
   getPendingJobs() {
     return jobQueue.getPendingJobs().map(job => ({
       jobId: job.id,

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { verifyToken } from './auth';
 
 export interface AuthContext {
+  userId: string;
   username: string;
   role: string;
 }

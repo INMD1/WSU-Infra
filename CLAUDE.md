@@ -70,6 +70,10 @@ DATASTORE_PREFIX=ds-          # 자동 선택할 데이터스토어 접두사
 PFSENSE_URL=https://pfsense.host
 PFSENSE_INSECURE=false
 
+# 관리자 계정 (학생 계정은 DB에서 관리)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_admin_password_here
+
 # JWT
 JWT_SECRET=your_secret_here
 
@@ -113,8 +117,7 @@ ESXI_MODE=govc
 
 ### 환경변수 추가
 ```env
-PFSENSE_API_KEY=your_api_key
-PFSENSE_API_CLIENT_ID=client_id   # 인증 방식에 따라 선택
+PFSENSE_API_KEY=your_api_key       # x-api-key 헤더로 전송 (v2 KeyAuth)
 PFSENSE_WAN_IP=1.2.3.4            # 외부 IP (응답에 표시)
 PFSENSE_PORT_RANGE_START=10000    # 자동 배정 범위 시작 (기본 10000)
 PFSENSE_PORT_RANGE_END=20000      # 자동 배정 범위 끝 (기본 20000)
@@ -126,10 +129,11 @@ PFSENSE_PORT_RANGE_END=20000      # 자동 배정 범위 끝 (기본 20000)
 - 초과 시 HTTP 403 반환
 
 ### pfSense API 호환성
-Jared Hendrickson의 pfSense-API (v1) 기준:
-- `POST /api/v1/firewall/nat/port_forward`로 규칙 생성
-- `DELETE /api/v1/firewall/nat/port_forward?tracker=<id>`로 삭제
-- 응답의 `data.tracker` 값을 DB에 저장 (`pfsense_tracker` 컬럼)
+pfSense-API **v2** 기준:
+- `POST /api/v2/firewall/nat/port_forward`로 규칙 생성 → 응답의 `data.id`(정수)를 DB에 저장 (`pfsense_tracker` 컬럼)
+- `DELETE /api/v2/firewall/nat/port_forward?id=<id>&apply=true`로 삭제 및 즉시 적용
+- POST 후 별도로 `POST /api/v2/firewall/apply` 호출하여 변경사항 적용
+- destination은 `wan:ip` (WAN 인터페이스 IP), source_port는 `null` (any)
 
 ## 알려진 제약
 

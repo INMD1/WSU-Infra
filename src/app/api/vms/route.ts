@@ -6,7 +6,8 @@ export async function GET(request: Request) {
   const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const data = await vmService.getAllVms();
+  const ownerId = auth.role === 'admin' ? undefined : auth.userId;
+  const data = await vmService.getAllVms(ownerId);
   return NextResponse.json({
     data,
     pagination: { page: 1, limit: 20, total: data.length },
@@ -15,7 +16,8 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/vms
- * Body: { name, image_id, vcpu, ram_gb, disk_gb, ssh_public_key?, password?, priority? }
+ * Body: { name, image_id, vcpu, ram_gb, disk_gb, ssh_public_key?, priority? }
+ * 비밀번호는 서버에서 자동 생성됨 (클라이언트에서 받지 않음)
  */
 export async function POST(request: Request) {
   const auth = requireAuth(request);
@@ -23,9 +25,8 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, image_id, vcpu, ram_gb, disk_gb, ssh_public_key, password, priority } = body;
+    const { name, image_id, vcpu, ram_gb, disk_gb, ssh_public_key, priority } = body;
 
-    // 필수 필드 검증
     if (!name || !image_id || !vcpu || !ram_gb || !disk_gb) {
       return NextResponse.json(
         { success: false, message: 'name, image_id, vcpu, ram_gb, disk_gb are required' },
@@ -33,17 +34,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // 비밀번호 검증 (제공된 경우)
-    if (password !== undefined) {
-      if (typeof password !== 'string' || password.length < 8 || password.length > 72) {
-        return NextResponse.json(
-          { success: false, message: 'password must be 8–72 characters' },
-          { status: 400 }
-        );
-      }
-    }
+    const jobData = {
+      name,
+      image_id,
+      vcpu,
+      ram_gb,
+      disk_gb,
+      ssh_public_key,
+      owner_id: auth.role === 'admin' ? undefined : auth.userId,
+    };
 
-    const { jobId, estimatedWait } = await vmService.createVm(body, priority || 0);
+    const { jobId, estimatedWait } = await vmService.createVm(jobData, priority || 0);
 
     return NextResponse.json({
       success: true,

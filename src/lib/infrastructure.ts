@@ -162,9 +162,10 @@ const govcStrategy = {
       lines.push(`      - ${sshKey}`);
     }
 
+    lines.push('');
+    lines.push('ssh_pwauth: true');
+
     if (password) {
-      lines.push('');
-      lines.push('ssh_pwauth: true');
       lines.push('chpasswd:');
       lines.push('  expire: false');
       lines.push('  list: |');
@@ -508,12 +509,9 @@ export const pfsenseClient = {
   },
 
   getHeaders(): Record<string, string> {
-    const clientId = process.env.PFSENSE_API_CLIENT_ID || '';
-    const apiKey = process.env.PFSENSE_API_KEY || '';
-    const auth = clientId ? `${clientId} ${apiKey}` : apiKey;
     return {
       'Content-Type': 'application/json',
-      'Authorization': auth,
+      'x-api-key': process.env.PFSENSE_API_KEY || '',
     };
   },
 
@@ -550,6 +548,10 @@ export const pfsenseClient = {
     return (json.data as PfSenseNatRule[]) || [];
   },
 
+  async applyFirewall(): Promise<void> {
+    await this.fetchWithTls(`${this.getUrl()}/api/v2/firewall/apply`, { method: 'POST', body: '{}' });
+  },
+
   async addPortForward(params: PortForwardParams): Promise<PortForwardResult> {
     this.assertConfigured();
     const protocol = params.protocol || 'tcp';
@@ -560,8 +562,8 @@ export const pfsenseClient = {
         ipprotocol: 'inet',
         protocol,
         source: 'any',
-        source_port: 'any',
-        destination: 'wanaddress',
+        source_port: null,
+        destination: 'wan:ip',
         destination_port: String(params.externalPort),
         target: params.internalIp,
         local_port: String(params.internalPort),
@@ -572,8 +574,10 @@ export const pfsenseClient = {
     const json = await res.json() as any;
     if (json.code !== 200) throw new Error('pfSense NAT rule creation failed');
 
+    await this.applyFirewall();
+
     return {
-      tracker: json.data.tracker || json.data.id,
+      tracker: String(json.data.id),
       externalIp: this.getWanIp(),
       externalPort: params.externalPort,
       internalIp: params.internalIp,
@@ -585,7 +589,7 @@ export const pfsenseClient = {
   async deletePortForward(id: string): Promise<void> {
     this.assertConfigured();
     const res = await this.fetchWithTls(
-      `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}`,
+      `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}&apply=true`,
       { method: 'DELETE' }
     );
     const json = await res.json() as any;

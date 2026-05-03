@@ -767,3 +767,256 @@ curl "http://localhost:3000/api/images?library=Ubuntu%20Images"
 | 날짜 | 변경 내용 |
 |------|----------|
 | 2026-05-02 | 고급 govc 프로비저닝 로직 구현, Content Library 통합, 자동 데이터스토어 선택, Cloud-init 지원, **대기열 시스템** 추가 |
+| 2026-05-03 | 동시 VM 생성 버그 수정, pfSense 포트 포워딩, 보안 강화, StoragePod 지원, Cloud-init 개선 |
+
+---
+
+## [2026-05-03] 주요 변경사항
+
+---
+
+### A. 동시 VM 생성 버그 수정
+
+#### A-1. JobQueue 직렬 실행 버그 (`src/lib/queue.ts`)
+
+**문제**: `process()` 내부에서 `await`을 사용해 실제로는 순차 실행이었음
+
+**수정**: `process()`를 동기 함수로 변경, `runJob()`을 fire-and-forget으로 분리
+
+```
+기존: while 루프에서 각 job await → 완료 후 다음 시작 (직렬)
+수정: process()로 빈 슬롯 채우기 → 각 job이 독립 실행 → 완료 시 process() 재호출
+```
+
+- `maxConcurrent` 기본값 2 → 3으로 상향
+
+#### A-2. Job ID 불일치 버그 (`src/services/vmService.ts`)
+
+**문제**: `createVm()`이 자체 생성한 `jobId`를 반환하고, 큐는 별도 UUID를 사용해 `GET /api/jobs/[id]`가 항상 404 반환
+
+**수정**: `jobQueue.add()` 반환값의 `job.id`를 그대로 클라이언트에 전달
+
+#### A-3. 중복 Datastore 선택 제거 (`src/lib/infrastructure.ts`, `src/services/vmService.ts`)
+
+**문제**: `processVmCreateJob`에서 `selectBestDatastore` 호출 후, `govcStrategy.createVm` 내부에서도 재호출하고 `params.datastore`를 무시함
+
+**수정**:
+- `govcStrategy.createVm`이 `params.datastore` 우선 사용
+- `processVmCreateJob`의 중복 호출 제거
+
+---
+
+### B. pfSense 포트 포워딩
+
+#### B-1. DB 스키마 (`src/db/schema.ts`)
+
+`port_forwards` 테이블 추가:
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | UUID PK | |
+| `tenant_id` | varchar | 할당량 기준 |
+| `protocol` | varchar | tcp / udp / tcp/udp |
+| `internal_ip` | varchar | 포워딩 대상 내부 IP |
+| `internal_port` | int | 포워딩 대상 내부 포트 |
+| `external_ip` | varchar | WAN IP |
+| `external_port` | int UNIQUE | 외부 포트 (자동 배정 또는 지정) |
+| `pfsense_tracker` | varchar | pfSense 내부 rule ID (삭제 시 사용) |
+
+#### B-2. pfSense API 클라이언트 (`src/lib/infrastructure.ts`)
+
+pfSense REST API v2 기준 실제 구현:
+
+```
+GET  /api/v2/firewall/nat/port_forwards     — 규칙 목록
+POST /api/v2/firewall/nat/port_forward      — 규칙 생성
+DEL  /api/v2/firewall/nat/port_forward?id=  — 규칙 삭제
+```
+
+인증: `Authorization: <PFSENSE_API_CLIENT_ID> <PFSENSE_API_KEY>`
+
+#### B-3. 포트 포워딩 서비스 (`src/services/portForwardService.ts`)
+
+- 외부 포트 자동 배정 (`PFSENSE_PORT_RANGE_START`~`PFSENSE_PORT_RANGE_END`, 기본 10000~20000)
+- 할당량 체크 (`quotas.max_public_ports`)
+- pfSense 생성 실패 시 DB 롤백, DB 실패 시 pfSense 규칙 롤백
+
+#### B-4. API 엔드포인트
+
+| Method | Path | 설명 |
+|--------|------|------|
+| GET | `/api/port-forwards` | 목록 (internal/external IP·포트 포함) |
+| POST | `/api/port-forwards` | 생성 |
+| DELETE | `/api/port-forwards/[id]` | 삭제 (pfSense 동기 제거) |
+
+**POST 요청 예시:**
+```json
+{
+  "internal_ip": "192.168.1.100",
+  "internal_port": 22,
+  "external_port": 10022,
+  "protocol": "tcp",
+  "description": "SSH"
+}
+```
+`external_port` 생략 시 자동 배정.
+
+#### B-5. 쿼터 서비스 연동 (`src/services/quotaService.ts`)
+
+`GET /api/quotas` 응답의 `usage.ports_used`가 실제 DB 카운트로 반영됨:
+```json
+{
+  "usage": { "ports_used": 3 },
+  "remaining": { "ports": 7 }
+}
+```
+
+#### B-6. 필요 환경변수
+
+```env
+PFSENSE_API_KEY=your-api-key
+PFSENSE_API_CLIENT_ID=client-id        # 선택 (v1 인증 방식)
+PFSENSE_WAN_IP=1.2.3.4
+PFSENSE_PORT_RANGE_START=10000
+PFSENSE_PORT_RANGE_END=20000
+```
+
+---
+
+### C. 보안 강화
+
+#### C-1. JWT 인증 미들웨어 (`src/lib/apiAuth.ts` 신규)
+
+모든 포트 포워딩 엔드포인트에 JWT 검증 추가.  
+`Authorization: Bearer <token>` 헤더 없으면 401 반환.
+
+```typescript
+const auth = requireAuth(request);
+if (auth instanceof NextResponse) return auth;
+```
+
+`GET /api/vms`, `POST /api/vms`에도 인증 추가.
+
+#### C-2. TLS 전역 오염 수정 (`pfsenseClient.fetchWithTls`)
+
+**문제**: `process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'` 영구 설정 → 프로세스 전체 HTTPS 검증 비활성화
+
+**수정**: 요청 전 저장, `finally`에서 원래 값 복원 (스코프 한정)
+
+#### C-3. 입력값 검증 (`ValidationError` 클래스)
+
+| 항목 | 규칙 |
+|------|------|
+| `internal_ip` | RFC 1918 사설 IP만 허용 (SSRF 방지) |
+| `internal_port` | 1~65535 정수 |
+| `protocol` | tcp / udp / tcp/udp 만 허용 |
+| `description` | 255자 이하 |
+| `password` | 8~72자 |
+
+#### C-4. 에러 메시지 sanitization
+
+pfSense/govc 내부 오류는 서버 로그에만 기록, 클라이언트에는 일반 메시지만 반환.  
+`ValidationError`만 구체적 메시지 전달.
+
+#### C-5. Race condition 방어
+
+pfSense 규칙 생성 후 DB 중복 키(`ER_DUP_ENTRY`) 시 pfSense 규칙 자동 롤백.
+
+---
+
+### D. StoragePod (Datastore Cluster) 지원
+
+#### D-1. `selectBestDatastore` 개선
+
+`GOVC_DATASTORE` 설정 시 govc 네트워크 호출 없이 즉시 반환.  
+govc `vm.clone`은 StoragePod 이름을 받으면 Storage DRS가 물리 배치 자동 결정.
+
+#### D-2. `listDatastores` StoragePod 지원
+
+`GOVC_DATASTORE` 설정 시 `govc datastore.cluster.info -json`으로 StoragePod 용량 조회.  
+기존 `govc datastore.info`는 StoragePod를 인식하지 못해 빈 목록 반환 문제 해결.
+
+#### D-3. ISO 업로드 분리 (`GOVC_ISO_DATASTORE`)
+
+StoragePod는 `govc datastore.upload` 대상 불가.  
+ISO 업로드 전용 DS를 `GOVC_ISO_DATASTORE`로 분리, 미설정 시 `GOVC_DATASTORE` 사용.
+
+```env
+GOVC_DATASTORE=DEFAULT-VM-DATASTORE-PROXY   # StoragePod 이름
+GOVC_ISO_DATASTORE=ds-node1                 # ISO 업로드용 개별 DS (CLOUD_INIT_METHOD=iso 시만 필요)
+```
+
+---
+
+### E. Cloud-init 개선
+
+#### E-1. 버그 수정
+
+| 항목 | 기존 | 수정 |
+|------|------|------|
+| govc 명령어 | `govc vm.update` (존재하지 않음) | `govc vm.change` |
+| user-data 포맷 | JSON 직렬화 | `#cloud-config` YAML |
+
+#### E-2. 비밀번호 지원
+
+`POST /api/vms`에 `password` 필드 추가.  
+cloud-config의 `chpasswd` 모듈로 처리 (cloud-init이 내부 해싱):
+
+```yaml
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  list: |
+    ubuntu:<password>
+```
+
+#### E-3. apt 미러 설정
+
+`CLOUD_INIT_APT_MIRROR` 환경변수로 apt 미러 주입:
+
+```yaml
+apt:
+  primary:
+    - arches: [default]
+      uri: http://mirror.example.com/ubuntu
+  security:
+    - arches: [default]
+      uri: http://mirror.example.com/ubuntu
+```
+
+#### E-4. ExtraConfig 기본값 변경
+
+```
+기존: ssh_public_key 있으면 → ISO (genisoimage 필요, StoragePod 호환 안됨)
+수정: 항상 ExtraConfig 기본 → CLOUD_INIT_METHOD=iso 설정 시에만 ISO
+```
+
+#### E-5. `buildCloudInitUserData()` 공유 헬퍼
+
+ISO/ExtraConfig 양쪽에서 동일한 YAML 생성 함수 공유.  
+비밀번호, SSH 키, apt 미러 모두 한 곳에서 관리.
+
+```env
+CLOUD_INIT_METHOD=extraconfig       # extraconfig(기본) | iso
+CLOUD_INIT_APT_MIRROR=http://mirror.example.com/ubuntu
+```
+
+---
+
+### F. 추가/수정 파일 목록
+
+| 파일 | 변경 |
+|------|------|
+| `src/lib/queue.ts` | 진정한 병렬 처리 구현 (process/runJob 분리) |
+| `src/lib/infrastructure.ts` | StoragePod 지원, Cloud-init 전면 개선, pfSense 실구현, TLS 수정 |
+| `src/lib/apiAuth.ts` | **신규** — JWT 인증 헬퍼 |
+| `src/lib/types.ts` | `PortForward` 타입 추가 |
+| `src/db/schema.ts` | `port_forwards` 테이블 추가 |
+| `src/services/vmService.ts` | Job ID 수정, password 전달, 중복 DS 선택 제거 |
+| `src/services/portForwardService.ts` | **신규** — 포트 포워딩 서비스 |
+| `src/services/quotaService.ts` | `ports_used` 실DB 카운트 연동 |
+| `src/app/api/vms/route.ts` | JWT 인증, password 검증 추가 |
+| `src/app/api/port-forwards/route.ts` | **신규** |
+| `src/app/api/port-forwards/[id]/route.ts` | **신규** |
+| `.env.example` | pfSense, Cloud-init, StoragePod 관련 변수 추가 |
+| `CLAUDE.md` | **신규** — 코드베이스 문서화 |
