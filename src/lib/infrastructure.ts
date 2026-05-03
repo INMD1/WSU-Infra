@@ -163,26 +163,45 @@ const govcStrategy = {
   async listDatastoreImages(): Promise<{ name: string; path: string; size_gb: number }[]> {
     const env = this.getEnv();
     const imageDs = process.env.CLOUD_IMAGE_DATASTORE || 'SSD-DATASTORE-01';
-    const imagePath = (process.env.CLOUD_IMAGE_PATH || 'Cloud-image').replace(/\/$/, '');
+    // 슬래시 제거 후 비어 있으면 루트 조회
+    const imagePath = (process.env.CLOUD_IMAGE_PATH || 'Cloud-image').replace(/^\/|\/$/g, '');
 
-    const { stdout } = await execPromise(
-      `govc datastore.ls -json -ds="${imageDs}" "${imagePath}/"`,
+    const parseFiles = (stdout: string, prefix: string) => {
+      if (!stdout.trim()) return [];
+      const raw = JSON.parse(stdout);
+      // govc 버전에 따라 배열 또는 {File:[]} 형태
+      const files: any[] = Array.isArray(raw)
+        ? (raw[0]?.File ?? [])
+        : (raw.File ?? []);
+      return files
+        .filter((f: any) => /\.(ova|ovf)$/i.test(f.Path ?? ''))
+        .map((f: any) => ({
+          name: f.Path,
+          path: prefix ? `${prefix}/${f.Path}` : f.Path,
+          size_gb: Math.round((f.FileSize ?? 0) / (1024 ** 3) * 10) / 10,
+        }));
+    };
+
+    // 1차: 지정된 경로 시도 (슬래시 없이)
+    if (imagePath) {
+      try {
+        const { stdout } = await execPromise(
+          `govc datastore.ls -json -ds="${imageDs}" "${imagePath}"`,
+          { env }
+        );
+        const result = parseFiles(stdout, imagePath);
+        if (result.length > 0) return result;
+      } catch {
+        // 경로가 없거나 접근 불가 → 루트로 폴백
+      }
+    }
+
+    // 2차: 데이터스토어 루트에서 직접 탐색
+    const { stdout: rootOut } = await execPromise(
+      `govc datastore.ls -json -ds="${imageDs}"`,
       { env }
     );
-
-    // govc 버전에 따라 최상위 배열 또는 객체로 반환됨
-    const raw = JSON.parse(stdout);
-    const files: any[] = Array.isArray(raw)
-      ? (raw[0]?.File ?? raw[0] ?? [])
-      : (raw.File ?? []);
-
-    return files
-      .filter((f: any) => /\.(ova|ovf)$/i.test(f.Path ?? ''))
-      .map((f: any) => ({
-        name: f.Path,
-        path: `${imagePath}/${f.Path}`,
-        size_gb: Math.round((f.FileSize ?? 0) / (1024 ** 3) * 10) / 10,
-      }));
+    return parseFiles(rootOut, '');
   },
 
   // 데이터센터 내 모든 ESXi 호스트와 메모리 여유 공간 반환
@@ -231,7 +250,7 @@ const govcStrategy = {
   async ensureOvaTemplate(ovaFileName: string): Promise<string> {
     const env = this.getEnv();
     const imageDs = process.env.CLOUD_IMAGE_DATASTORE || 'SSD-DATASTORE-01';
-    const imagePath = (process.env.CLOUD_IMAGE_PATH || 'Cloud-image').replace(/\/$/, '');
+    const imagePath = (process.env.CLOUD_IMAGE_PATH || 'Cloud-image').replace(/^\/|\/$/g, '');
     const templateName = `tpl-${ovaFileName.replace(/\.(ova|ovf)$/i, '')}`;
 
     // 이미 템플릿이 존재하면 재사용
@@ -251,8 +270,10 @@ const govcStrategy = {
     const tmpOvaPath = path.join(os.tmpdir(), `${Date.now()}-${ovaFileName}`);
 
     // 이미지 데이터스토어에서 로컬로 다운로드
+    // imagePath가 있으면 "path/file.ova", 없으면 루트 "file.ova"
+    const remoteOvaPath = imagePath ? `${imagePath}/${ovaFileName}` : ovaFileName;
     await execPromise(
-      `govc datastore.download -ds="${imageDs}" "${imagePath}/${ovaFileName}" "${tmpOvaPath}"`,
+      `govc datastore.download -ds="${imageDs}" "${remoteOvaPath}" "${tmpOvaPath}"`,
       { env }
     );
 
