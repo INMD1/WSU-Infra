@@ -64,7 +64,9 @@ GOVC_NETWORK=Internal-VNIC
 GOVC_RESOURCE_POOL=
 GOVC_FOLDER=
 GOVC_DATACENTER=/
-DATASTORE_PREFIX=ds-          # 자동 선택할 데이터스토어 접두사
+DATASTORE_PREFIX=ds-          # 자동 선택할 배포 데이터스토어 접두사 (비워두면 모든 DS 대상)
+CLOUD_IMAGE_DATASTORE=SSD-DATASTORE-01   # OVA 이미지가 저장된 데이터스토어
+CLOUD_IMAGE_PATH=Cloud-image             # 해당 데이터스토어 내 OVA 폴더 경로
 
 # pfSense (포트 포워딩)
 PFSENSE_URL=https://pfsense.host

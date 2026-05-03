@@ -1,52 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { imageService } from '@/services/imageService';
+import { requireAuth } from '@/lib/apiAuth';
+import { esxiClient } from '@/lib/infrastructure';
 
 /**
  * GET /api/images
- * Cloud Image (OVA/OVF) 목록 조회
- * Query Parameters:
- *   - library: Library 이름 (선택)
- *   - path: Library 경로 (선택, 기본: "/")
- *   - libraries: true 로 설정 시 Library 목록 조회
+ *
+ * ?source=datastore  → CLOUD_IMAGE_DATASTORE / CLOUD_IMAGE_PATH 의 OVA/OVF 목록
+ * ?source=library    → Content Library 이미지 목록 (기존)
+ * 기본값: datastore
  */
 export async function GET(request: NextRequest) {
+  const auth = requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+
+  const source = request.nextUrl.searchParams.get('source') ?? 'datastore';
+
   try {
-    const { searchParams } = new URL(request.url);
-    const library = searchParams.get('library');
-    const path = searchParams.get('path') || '/';
-    const libraries = searchParams.get('libraries');
-
-    // Library 목록 조회 모드
-    if (libraries === 'true') {
-      const libs = await imageService.listLibraries();
-      return NextResponse.json({
-        success: true,
-        data: libs,
-        type: 'libraries'
-      });
+    if (source === 'library') {
+      const images = await esxiClient.listCloudImages('/');
+      return NextResponse.json({ success: true, source: 'library', data: images });
     }
 
-    // Image 목록 조회
-    let images;
-    if (library) {
-      images = await imageService.getImagesByLibrary(library);
-    } else {
-      images = await imageService.listImages(path);
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: images,
-      count: images.length,
-      type: 'images'
-    });
+    // datastore (기본)
+    const images = await esxiClient.listDatastoreImages();
+    return NextResponse.json({ success: true, source: 'datastore', data: images });
   } catch (error: any) {
     console.error('[API] GET /api/images error:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to fetch images'
-      },
+      { success: false, error: error.message || 'Failed to fetch images' },
       { status: 500 }
     );
   }

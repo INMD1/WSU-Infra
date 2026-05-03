@@ -18,10 +18,11 @@ function authFetch(url: string, options: RequestInit = {}) {
 export default function DashboardPage() {
   const [quotas, setQuotas] = useState<any>(null);
   const [vms, setVms] = useState<any[]>([]);
+  const [images, setImages] = useState<{ name: string; path: string; size_gb: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJobsModal, setShowJobsModal] = useState(false);
-  const [newVm, setNewVm] = useState({ name: '', vcpu: 2, ram_gb: 4, disk_gb: 40, image_id: 'ubuntu-22.04' });
+  const [newVm, setNewVm] = useState({ name: '', vcpu: 2, ram_gb: 4, disk_gb: 40, image_id: '' });
   const [createResult, setCreateResult] = useState<{ jobId: string; estimatedWait: number } | null>(null);
   const [jobStatus, setJobStatus] = useState<any>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export default function DashboardPage() {
     setUsername(localStorage.getItem('username') || '');
     setRole(localStorage.getItem('role') || '');
     fetchData();
+    fetchImages();
   }, [router]);
 
   const fetchData = async () => {
@@ -53,6 +55,21 @@ export default function DashboardPage() {
       console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchImages = async () => {
+    try {
+      const res = await authFetch('/api/images?source=datastore');
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = data.data || [];
+      setImages(list);
+      if (list.length > 0) {
+        setNewVm(prev => ({ ...prev, image_id: list[0].name }));
+      }
+    } catch {
+      // 이미지 목록 실패 시 수동 입력으로 대체
     }
   };
 
@@ -253,8 +270,29 @@ export default function DashboardPage() {
               <label>Disk (GB)</label>
               <input type="number" min={10} value={newVm.disk_gb} onChange={e => setNewVm({ ...newVm, disk_gb: parseInt(e.target.value) })} required />
 
-              <label>Image ID</label>
-              <input type="text" value={newVm.image_id} onChange={e => setNewVm({ ...newVm, image_id: e.target.value })} required />
+              <label>이미지 (OVA)</label>
+              {images.length > 0 ? (
+                <select
+                  value={newVm.image_id}
+                  onChange={e => setNewVm({ ...newVm, image_id: e.target.value })}
+                  required
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid var(--border)', background: 'var(--bg-secondary)', marginBottom: '1rem' }}
+                >
+                  {images.map(img => (
+                    <option key={img.name} value={img.name}>
+                      {img.name} {img.size_gb > 0 ? `(${img.size_gb} GB)` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={newVm.image_id}
+                  onChange={e => setNewVm({ ...newVm, image_id: e.target.value })}
+                  placeholder="OVA 파일명 또는 템플릿 VM 이름"
+                  required
+                />
+              )}
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={isCreating}>

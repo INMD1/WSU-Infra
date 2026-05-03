@@ -18,6 +18,15 @@ interface VmCreateParams {
   folder?: string;
   resource_pool?: string;
   datastore?: string;
+  host?: string;
+}
+
+interface HostInfo {
+  path: string;
+  name: string;
+  free_memory_mb: number;
+  total_memory_mb: number;
+  cpu_usage_mhz: number;
 }
 
 interface VmResult {
@@ -71,9 +80,8 @@ const govcStrategy = {
     };
   },
 
-  async selectBestDatastore(prefix = 'ds-', minFreeGb = 20): Promise<string> {
+  async selectBestDatastore(prefix = 'ds-', minFreeGb = 20, excludeNames: string[] = []): Promise<string> {
     // GOVC_DATASTORE가 설정된 경우 그대로 사용 (StoragePod 포함).
-    // govc vm.clone은 StoragePod 이름을 받으면 Storage DRS가 내부 배치를 결정한다.
     if (process.env.GOVC_DATASTORE) {
       console.log(`[govc] Using configured datastore/StoragePod: ${process.env.GOVC_DATASTORE}`);
       return process.env.GOVC_DATASTORE;
@@ -88,11 +96,15 @@ const govcStrategy = {
         name: ds.Info.Name,
         freeSpaceGb: ds.Info.FreeSpace / (1024 ** 3),
       }))
-      .filter((ds: any) => ds.name.startsWith(prefix) && ds.freeSpaceGb >= minFreeGb)
+      .filter((ds: any) =>
+        (prefix === '' || ds.name.startsWith(prefix)) &&
+        ds.freeSpaceGb >= minFreeGb &&
+        !excludeNames.includes(ds.name)
+      )
       .sort((a: any, b: any) => b.freeSpaceGb - a.freeSpaceGb);
 
     if (candidates.length === 0) {
-      throw new Error(`No suitable datastore found with prefix '${prefix}' and ${minFreeGb}GB free.`);
+      throw new Error(`No suitable datastore found (prefix='${prefix}', min=${minFreeGb}GB free).`);
     }
 
     console.log(`[govc] Selected datastore: ${candidates[0].name} (${candidates[0].freeSpaceGb.toFixed(2)}GB free)`);
@@ -145,6 +157,120 @@ const govcStrategy = {
         type: ds.Info.Type || 'unknown',
       };
     }).sort((a: DatastoreInfo, b: DatastoreInfo) => a.name.localeCompare(b.name));
+  },
+
+  // 이미지 데이터스토어에서 OVA/OVF 파일 목록 반환
+  async listDatastoreImages(): Promise<{ name: string; path: string; size_gb: number }[]> {
+    const env = this.getEnv();
+    const imageDs = process.env.CLOUD_IMAGE_DATASTORE || 'SSD-DATASTORE-01';
+    const imagePath = (process.env.CLOUD_IMAGE_PATH || 'Cloud-image').replace(/\/$/, '');
+
+    const { stdout } = await execPromise(
+      `govc datastore.ls -json -ds="${imageDs}" "${imagePath}/"`,
+      { env }
+    );
+
+    // govc 버전에 따라 최상위 배열 또는 객체로 반환됨
+    const raw = JSON.parse(stdout);
+    const files: any[] = Array.isArray(raw)
+      ? (raw[0]?.File ?? raw[0] ?? [])
+      : (raw.File ?? []);
+
+    return files
+      .filter((f: any) => /\.(ova|ovf)$/i.test(f.Path ?? ''))
+      .map((f: any) => ({
+        name: f.Path,
+        path: `${imagePath}/${f.Path}`,
+        size_gb: Math.round((f.FileSize ?? 0) / (1024 ** 3) * 10) / 10,
+      }));
+  },
+
+  // 데이터센터 내 모든 ESXi 호스트와 메모리 여유 공간 반환
+  async listHosts(): Promise<HostInfo[]> {
+    const env = this.getEnv();
+    const { stdout: hostPaths } = await execPromise('govc find -type h', { env });
+    const paths = hostPaths.trim().split('\n').filter(Boolean);
+    if (paths.length === 0) return [];
+
+    const results: HostInfo[] = [];
+    for (const hostPath of paths) {
+      try {
+        const { stdout } = await execPromise(`govc host.info -json "${hostPath}"`, { env });
+        const raw = JSON.parse(stdout);
+        // govc 버전에 따라 배열 또는 {HostSystems:[...]} 형태
+        const hs = Array.isArray(raw) ? raw[0] : raw?.HostSystems?.[0];
+        if (!hs) continue;
+
+        const totalMemMb = Math.round((hs.Summary?.Hardware?.MemorySize ?? 0) / (1024 * 1024));
+        const usedMemMb = hs.Summary?.QuickStats?.OverallMemoryUsage ?? totalMemMb;
+        results.push({
+          path: hostPath,
+          name: hs.Summary?.Config?.Name ?? hostPath.split('/').pop() ?? hostPath,
+          free_memory_mb: Math.max(0, totalMemMb - usedMemMb),
+          total_memory_mb: totalMemMb,
+          cpu_usage_mhz: hs.Summary?.QuickStats?.OverallCpuUsage ?? 0,
+        });
+      } catch {
+        // 일시적으로 응답 없는 호스트는 건너뜀
+      }
+    }
+    return results;
+  },
+
+  // 메모리 여유 공간이 가장 많은 호스트 경로 반환
+  async selectBestHost(): Promise<string> {
+    const hosts = await this.listHosts();
+    if (hosts.length === 0) throw new Error('No ESXi hosts found in datacenter');
+    hosts.sort((a, b) => b.free_memory_mb - a.free_memory_mb);
+    const best = hosts[0];
+    console.log(`[govc] Selected host: ${best.name} (free memory: ${Math.round(best.free_memory_mb / 1024)}GB)`);
+    return best.path;
+  },
+
+  // OVA 파일을 템플릿 VM으로 임포트 (이미 존재하면 그대로 반환)
+  async ensureOvaTemplate(ovaFileName: string): Promise<string> {
+    const env = this.getEnv();
+    const imageDs = process.env.CLOUD_IMAGE_DATASTORE || 'SSD-DATASTORE-01';
+    const imagePath = (process.env.CLOUD_IMAGE_PATH || 'Cloud-image').replace(/\/$/, '');
+    const templateName = `tpl-${ovaFileName.replace(/\.(ova|ovf)$/i, '')}`;
+
+    // 이미 템플릿이 존재하면 재사용
+    try {
+      const { stdout } = await execPromise(`govc vm.info -json "${templateName}"`, { env });
+      const info = JSON.parse(stdout);
+      const vms = Array.isArray(info) ? info : info?.VirtualMachines ?? [];
+      if (vms.length > 0) {
+        console.log(`[govc] Template "${templateName}" already exists, reusing`);
+        return templateName;
+      }
+    } catch {
+      // 존재하지 않음 — 계속 진행
+    }
+
+    console.log(`[govc] Importing OVA "${ovaFileName}" as template...`);
+    const tmpOvaPath = path.join(os.tmpdir(), `${Date.now()}-${ovaFileName}`);
+
+    // 이미지 데이터스토어에서 로컬로 다운로드
+    await execPromise(
+      `govc datastore.download -ds="${imageDs}" "${imagePath}/${ovaFileName}" "${tmpOvaPath}"`,
+      { env }
+    );
+
+    try {
+      const poolFlag = env.GOVC_RESOURCE_POOL ? `-pool="${env.GOVC_RESOURCE_POOL}"` : '';
+      const folderFlag = env.GOVC_FOLDER ? `-folder="${env.GOVC_FOLDER}"` : '';
+      // 이미지 데이터스토어에 템플릿 저장 (배포용 DS 절약)
+      await execPromise(
+        `govc import.ova -ds="${imageDs}" ${poolFlag} ${folderFlag} -name="${templateName}" "${tmpOvaPath}"`,
+        { env }
+      );
+      await execPromise(`govc vm.markastemplate "${templateName}"`, { env });
+      console.log(`[govc] Template "${templateName}" created and marked`);
+    } finally {
+      await fs.unlink(tmpOvaPath).catch(() => {});
+    }
+
+    return templateName;
   },
 
   // cloud-config YAML 생성 — 비밀번호, SSH 키, apt 미러를 한곳에서 관리
@@ -232,18 +358,34 @@ const govcStrategy = {
     const ramMb = params.ram_gb * 1024;
     let createdVmName = params.name;
     let isoPath = '';
+    const imageDs = process.env.CLOUD_IMAGE_DATASTORE || 'SSD-DATASTORE-01';
 
     try {
-      const datastore = params.datastore || await this.selectBestDatastore(process.env.DATASTORE_PREFIX || 'ds-');
+      // OVA 파일이면 템플릿 VM으로 임포트 (최초 1회)
+      const templateName = /\.(ova|ovf)$/i.test(params.template)
+        ? await this.ensureOvaTemplate(params.template)
+        : params.template;
+
+      // 호스트 자동 선택 (메모리 여유 공간 기준)
+      const targetHost = params.host || await this.selectBestHost().catch(() => '');
+
+      // 배포 데이터스토어 선택 (이미지 DS 제외)
+      const datastore = params.datastore || await this.selectBestDatastore(
+        process.env.DATASTORE_PREFIX || '',
+        20,
+        [imageDs]
+      );
+
       const needsCloudInit = params.ssh_public_key || params.password || process.env.CLOUD_INIT_APT_MIRROR;
       const useIso = process.env.CLOUD_INIT_METHOD === 'iso';
 
       // VM Clone
-      console.log(`[govc] Cloning VM: ${params.name} from ${params.template}...`);
+      console.log(`[govc] Cloning "${templateName}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${datastore}`);
+      const hostFlag = targetHost ? `-host="${targetHost}"` : '';
       const poolFlag = env.GOVC_RESOURCE_POOL ? `-pool="${env.GOVC_RESOURCE_POOL}"` : '';
       const folderFlag = env.GOVC_FOLDER ? `-folder="${env.GOVC_FOLDER}"` : '';
       await execPromise(
-        `govc vm.clone -vm="${params.template}" -ds="${datastore}" ${poolFlag} ${folderFlag} -on=false "${params.name}"`,
+        `govc vm.clone -vm="${templateName}" -ds="${datastore}" ${hostFlag} ${poolFlag} ${folderFlag} -on=false "${params.name}"`,
         { env }
       );
 
@@ -410,6 +552,22 @@ const restStrategy = {
     return [];
   },
 
+  async listDatastoreImages(): Promise<{ name: string; path: string; size_gb: number }[]> {
+    return [];
+  },
+
+  async listHosts(): Promise<HostInfo[]> {
+    return [];
+  },
+
+  async selectBestHost(): Promise<string> {
+    return '';
+  },
+
+  async ensureOvaTemplate(ovaFileName: string): Promise<string> {
+    return ovaFileName;
+  },
+
   async deployFromLibrary(): Promise<void> {
     // noop
   },
@@ -469,7 +627,20 @@ export const esxiClient = {
 
   async deployFromLibrary(imageName: string, vmName: string, libraryPath = '/'): Promise<void> {
     return await this.strategy.deployFromLibrary(imageName, vmName, libraryPath);
-  }
+  },
+
+  // 데이터스토어 이미지 관련
+  async listDatastoreImages(): Promise<{ name: string; path: string; size_gb: number }[]> {
+    return await this.strategy.listDatastoreImages();
+  },
+
+  async listHosts(): Promise<HostInfo[]> {
+    return await this.strategy.listHosts();
+  },
+
+  async selectBestHost(): Promise<string> {
+    return await this.strategy.selectBestHost();
+  },
 };
 
 export interface PortForwardParams {
