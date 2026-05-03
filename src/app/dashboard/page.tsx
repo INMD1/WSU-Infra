@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 function authFetch(url: string, options: RequestInit = {}) {
@@ -15,33 +15,70 @@ function authFetch(url: string, options: RequestInit = {}) {
   });
 }
 
+// ────────────────────────────────────────────────
+// Types
+// ────────────────────────────────────────────────
+interface PortForward {
+  id: string;
+  vm_id: string | null;
+  protocol: string;
+  internal_ip: string;
+  internal_port: number;
+  external_ip: string;
+  external_port: number;
+  description: string | null;
+  created_at: string;
+}
+
+interface Vm {
+  vm_id: string;
+  name: string;
+  status: string;
+  vcpu: number;
+  ram_gb: number;
+  disk_gb: number;
+  internal_ip: string | null;
+  vm_password: string | null;
+  port_forwards: PortForward[];
+  created_at: string;
+}
+
+// ────────────────────────────────────────────────
+// Main page
+// ────────────────────────────────────────────────
 export default function DashboardPage() {
   const [quotas, setQuotas] = useState<any>(null);
-  const [vms, setVms] = useState<any[]>([]);
-  const [images, setImages] = useState<{ name: string; path: string; size_gb: number }[]>([]);
+  const [vms, setVms] = useState<Vm[]>([]);
+  const [images, setImages] = useState<{ name: string; size_gb: number }[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // VM 생성 모달
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showJobsModal, setShowJobsModal] = useState(false);
   const [newVm, setNewVm] = useState({ name: '', vcpu: 2, ram_gb: 4, disk_gb: 40, image_id: '' });
-  const [createResult, setCreateResult] = useState<{ jobId: string; estimatedWait: number } | null>(null);
-  const [jobStatus, setJobStatus] = useState<any>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+
+  // Job 진행 모달
+  const [showJobsModal, setShowJobsModal] = useState(false);
+  const [createResult, setCreateResult] = useState<{ jobId: string; estimatedWait: number } | null>(null);
+  const [jobStatus, setJobStatus] = useState<any>(null);
+
+  // 비밀번호 표시
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+
+  // 포트포워딩 모달
+  const [pfVm, setPfVm] = useState<Vm | null>(null);
+  const [newPf, setNewPf] = useState({ internal_port: 22, external_port: '', protocol: 'tcp', description: '' });
+  const [pfError, setPfError] = useState<string | null>(null);
+  const [pfSubmitting, setPfSubmitting] = useState(false);
+  const [deletingPfId, setDeletingPfId] = useState<string | null>(null);
+
   const [username, setUsername] = useState('');
   const [role, setRole] = useState('');
   const router = useRouter();
 
-  useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) { router.push('/login'); return; }
-    setUsername(localStorage.getItem('username') || '');
-    setRole(localStorage.getItem('role') || '');
-    fetchData();
-    fetchImages();
-  }, [router]);
-
-  const fetchData = async () => {
+  // ── 데이터 로딩 ──────────────────────────────
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const [quotaRes, vmsRes] = await Promise.all([
@@ -50,58 +87,52 @@ export default function DashboardPage() {
       ]);
       if (quotaRes.status === 401) { router.push('/login'); return; }
       setQuotas(await quotaRes.json());
-      setVms((await vmsRes.json()).data || []);
-    } catch (err) {
-      console.error('Error fetching data:', err);
+      const vmsJson = await vmsRes.json();
+      const list: Vm[] = vmsJson.data || [];
+      setVms(list);
+      // 열려 있는 포트포워딩 모달 VM 데이터도 갱신
+      setPfVm(prev => prev ? (list.find(v => v.vm_id === prev.vm_id) ?? null) : null);
+    } catch {
+      console.error('fetchData failed');
     } finally {
       setLoading(false);
     }
-  };
+  }, [router]);
 
-  const fetchImages = async () => {
-    try {
-      const res = await authFetch('/api/images?source=datastore');
-      if (!res.ok) return;
-      const data = await res.json();
-      const list = data.data || [];
-      setImages(list);
-      if (list.length > 0) {
-        setNewVm(prev => ({ ...prev, image_id: list[0].name }));
-      }
-    } catch {
-      // 이미지 목록 실패 시 수동 입력으로 대체
-    }
-  };
+  useEffect(() => {
+    const token = localStorage.getItem('access_token');
+    if (!token) { router.push('/login'); return; }
+    setUsername(localStorage.getItem('username') || '');
+    setRole(localStorage.getItem('role') || '');
+    fetchData();
 
-  const handleLogout = () => {
-    localStorage.clear();
-    router.push('/login');
-  };
+    authFetch('/api/images?source=datastore')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const list = d?.data || [];
+        setImages(list);
+        if (list.length > 0) setNewVm(p => ({ ...p, image_id: list[0].name }));
+      })
+      .catch(() => {});
+  }, [fetchData, router]);
 
+  // ── VM 생성 ───────────────────────────────────
   const handleCreateVm = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
     setCreateError(null);
-    setCreateResult(null);
-    setJobStatus(null);
-
     try {
-      const res = await authFetch('/api/vms', {
-        method: 'POST',
-        body: JSON.stringify(newVm),
-      });
-
+      const res = await authFetch('/api/vms', { method: 'POST', body: JSON.stringify(newVm) });
       const data = await res.json();
-
       if (res.ok) {
         setCreateResult({ jobId: data.jobId, estimatedWait: data.estimatedWaitSeconds });
         setShowCreateModal(false);
         startJobPolling(data.jobId);
       } else {
-        setCreateError(data.message || 'VM 생성에 실패했습니다.');
+        setCreateError(data.message || 'VM 생성 실패');
       }
     } catch {
-      setCreateError('네트워크 오류가 발생했습니다.');
+      setCreateError('네트워크 오류');
     } finally {
       setIsCreating(false);
     }
@@ -114,54 +145,91 @@ export default function DashboardPage() {
         const res = await authFetch(`/api/jobs/${jobId}`);
         const data = await res.json();
         setJobStatus(data);
-
         if (data.status === 'completed' || data.status === 'failed') {
           fetchData();
           setTimeout(() => { setCreateResult(null); setJobStatus(null); setShowJobsModal(false); }, 3000);
           return;
         }
         setTimeout(poll, 2000);
-      } catch {
-        console.error('Error polling job');
-      }
+      } catch { /* ignore */ }
     };
     poll();
   };
 
-  const togglePassword = (vmId: string) => {
-    setVisiblePasswords(prev => ({ ...prev, [vmId]: !prev[vmId] }));
+  // ── 포트포워딩 생성 ───────────────────────────
+  const handleCreatePf = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pfVm?.internal_ip) return;
+    setPfSubmitting(true);
+    setPfError(null);
+    try {
+      const body: any = {
+        vm_id: pfVm.vm_id,
+        internal_ip: pfVm.internal_ip,
+        internal_port: Number(newPf.internal_port),
+        protocol: newPf.protocol,
+        description: newPf.description || undefined,
+      };
+      if (newPf.external_port !== '') body.external_port = Number(newPf.external_port);
+
+      const res = await authFetch('/api/port-forwards', { method: 'POST', body: JSON.stringify(body) });
+      const data = await res.json();
+      if (res.ok) {
+        setNewPf({ internal_port: 22, external_port: '', protocol: 'tcp', description: '' });
+        fetchData();
+      } else {
+        setPfError(data.message || '생성 실패');
+      }
+    } catch {
+      setPfError('네트워크 오류');
+    } finally {
+      setPfSubmitting(false);
+    }
   };
+
+  // ── 포트포워딩 삭제 ───────────────────────────
+  const handleDeletePf = async (pfId: string) => {
+    if (!confirm('이 포트포워딩 규칙을 삭제하시겠습니까?')) return;
+    setDeletingPfId(pfId);
+    try {
+      const res = await authFetch(`/api/port-forwards/${pfId}`, { method: 'DELETE' });
+      if (res.ok) fetchData();
+      else {
+        const d = await res.json();
+        alert(d.message || '삭제 실패');
+      }
+    } catch {
+      alert('네트워크 오류');
+    } finally {
+      setDeletingPfId(null);
+    }
+  };
+
+  const handleLogout = () => { localStorage.clear(); router.push('/login'); };
 
   if (loading && !quotas) return <div className="container">로딩 중...</div>;
 
   return (
     <div className="container">
+      {/* ── Header ── */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <div>
           <h1>클라우드 대시보드</h1>
           <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>학번: {username}</span>
         </div>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           {createResult && (
-            <button className="btn-secondary" onClick={() => setShowJobsModal(true)}>
-              대기열 보기
-            </button>
+            <button className="btn-secondary" onClick={() => setShowJobsModal(true)}>대기열 보기</button>
           )}
           {role === 'admin' && (
-            <button className="btn-secondary" onClick={() => router.push('/admin')}>
-              관리자 패널
-            </button>
+            <button className="btn-secondary" onClick={() => router.push('/admin')}>관리자 패널</button>
           )}
           <button className="btn-primary" onClick={() => setShowCreateModal(true)}>새 VM 생성</button>
-          <button
-            onClick={handleLogout}
-            style={{ background: 'none', border: '1px solid var(--border)', padding: '0.5rem 1rem', borderRadius: '0.375rem', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem' }}
-          >
-            로그아웃
-          </button>
+          <button onClick={handleLogout} style={logoutBtnStyle}>로그아웃</button>
         </div>
       </header>
 
+      {/* ── Quota ── */}
       {quotas && (
         <section className="card">
           <h2 style={{ marginBottom: '1rem' }}>내 쿼터 사용량</h2>
@@ -169,11 +237,12 @@ export default function DashboardPage() {
             <QuotaItem label="VM 개수" used={quotas.usage?.vm_count ?? 0} total={quotas.quota?.max_vm_count ?? 5} unit="개" />
             <QuotaItem label="vCPU" used={quotas.usage?.vcpu_total ?? 0} total={quotas.quota?.max_vcpu_total ?? 20} unit="Core" />
             <QuotaItem label="RAM" used={quotas.usage?.ram_gb_total ?? 0} total={quotas.quota?.max_ram_gb_total ?? 64} unit="GB" />
-            <QuotaItem label="Disk" used={quotas.usage?.disk_gb_total ?? 0} total={quotas.quota?.max_disk_gb_total ?? 1000} unit="GB" />
+            <QuotaItem label="포트" used={quotas.usage?.ports_used ?? 0} total={quotas.quota?.max_public_ports ?? 10} unit="개" />
           </div>
         </section>
       )}
 
+      {/* ── VM 목록 ── */}
       <section className="card">
         <h2 style={{ marginBottom: '1rem' }}>가상 머신 목록</h2>
         <table>
@@ -181,182 +250,275 @@ export default function DashboardPage() {
             <tr>
               <th>이름</th>
               <th>상태</th>
-              <th>사양 (vCPU/RAM/Disk)</th>
-              <th>IP 주소</th>
+              <th>사양</th>
+              <th>IP</th>
               <th>SSH 비밀번호</th>
+              <th>포트포워딩</th>
               <th>생성일</th>
             </tr>
           </thead>
           <tbody>
             {vms.length === 0 ? (
-              <tr>
-                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td>
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
+            ) : vms.map(vm => (
+              <tr key={vm.vm_id}>
+                <td style={{ fontWeight: 500 }}>{vm.name}</td>
+                <td><StatusBadge status={vm.status} /></td>
+                <td style={{ fontSize: '0.85rem' }}>{vm.vcpu}C / {vm.ram_gb}GB / {vm.disk_gb}GB</td>
+                <td style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>{vm.internal_ip || '—'}</td>
+                <td>
+                  {vm.vm_password ? (
+                    <PasswordCell vmId={vm.vm_id} password={vm.vm_password}
+                      visible={!!visiblePasswords[vm.vm_id]}
+                      onToggle={() => setVisiblePasswords(p => ({ ...p, [vm.vm_id]: !p[vm.vm_id] }))}
+                    />
+                  ) : '—'}
+                </td>
+                <td>
+                  <button
+                    onClick={() => { setPfVm(vm); setPfError(null); }}
+                    style={pfBtnStyle}
+                    disabled={!vm.internal_ip}
+                    title={!vm.internal_ip ? 'VM IP가 할당된 후 사용 가능합니다' : ''}
+                  >
+                    {vm.port_forwards?.length > 0 ? `${vm.port_forwards.length}개 보기` : '추가'}
+                  </button>
+                </td>
+                <td style={{ fontSize: '0.85rem' }}>{new Date(vm.created_at).toLocaleDateString()}</td>
               </tr>
-            ) : (
-              vms.map((vm: any) => (
-                <tr key={vm.vm_id}>
-                  <td style={{ fontWeight: 500 }}>{vm.name}</td>
-                  <td>
-                    <span style={{
-                      padding: '0.25rem 0.5rem',
-                      borderRadius: '0.25rem',
-                      fontSize: '0.85rem',
-                      background: vm.status === 'running' ? '#dcfce7' : '#fee2e2',
-                      color: vm.status === 'running' ? '#166534' : '#991b1b',
-                    }}>
-                      {vm.status}
-                    </span>
-                  </td>
-                  <td>{vm.vcpu} Core / {vm.ram_gb} GB / {vm.disk_gb} GB</td>
-                  <td style={{ fontFamily: 'monospace' }}>{vm.internal_ip || '-'}</td>
-                  <td>
-                    {vm.vm_password ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
-                          {visiblePasswords[vm.vm_id] ? vm.vm_password : '••••••••'}
-                        </span>
-                        <button
-                          onClick={() => togglePassword(vm.vm_id)}
-                          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '0.25rem', padding: '0.15rem 0.4rem', cursor: 'pointer', fontSize: '0.75rem' }}
-                        >
-                          {visiblePasswords[vm.vm_id] ? '숨기기' : '보기'}
-                        </button>
-                        {visiblePasswords[vm.vm_id] && (
-                          <button
-                            onClick={() => navigator.clipboard.writeText(vm.vm_password)}
-                            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: '0.25rem', padding: '0.15rem 0.4rem', cursor: 'pointer', fontSize: '0.75rem' }}
-                          >
-                            복사
-                          </button>
-                        )}
-                      </div>
-                    ) : '-'}
-                  </td>
-                  <td>{new Date(vm.created_at).toLocaleDateString()}</td>
-                </tr>
-              ))
-            )}
+            ))}
           </tbody>
         </table>
       </section>
 
-      {showCreateModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div className="card" style={{ width: '500px', marginBottom: 0 }}>
-            <h2 style={{ marginBottom: '0.5rem' }}>새 가상 머신 생성</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-              SSH 비밀번호는 자동 생성되어 생성 후 목록에서 확인할 수 있습니다.
+      {/* ── 포트포워딩 모달 ── */}
+      {pfVm && (
+        <Modal onClose={() => setPfVm(null)} title={`포트포워딩 — ${pfVm.name}`} width={640}>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+            내부 IP: <code style={{ background: 'var(--bg-secondary)', padding: '0.1rem 0.4rem', borderRadius: '0.25rem' }}>{pfVm.internal_ip}</code>
+          </p>
+
+          {/* 현재 규칙 목록 */}
+          {pfVm.port_forwards?.length > 0 ? (
+            <table style={{ marginBottom: '1.5rem' }}>
+              <thead>
+                <tr>
+                  <th>프로토콜</th>
+                  <th>내부 포트</th>
+                  <th>외부 접속</th>
+                  <th>설명</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pfVm.port_forwards.map(pf => (
+                  <tr key={pf.id}>
+                    <td><span style={protocolBadgeStyle}>{pf.protocol.toUpperCase()}</span></td>
+                    <td style={{ fontFamily: 'monospace' }}>{pf.internal_port}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+                      {pf.external_ip}:{pf.external_port}
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{pf.description || '—'}</td>
+                    <td>
+                      <button
+                        onClick={() => handleDeletePf(pf.id)}
+                        disabled={deletingPfId === pf.id}
+                        style={deleteBtnStyle}
+                      >
+                        {deletingPfId === pf.id ? '...' : '삭제'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+              등록된 포트포워딩 규칙이 없습니다.
             </p>
-            {createError && (
-              <div style={{ padding: '0.75rem', background: '#fee2e2', color: '#991b1b', borderRadius: '0.5rem', marginBottom: '1rem' }}>
-                {createError}
-              </div>
-            )}
-            <form onSubmit={handleCreateVm}>
-              <label>VM 이름</label>
-              <input type="text" value={newVm.name} onChange={e => setNewVm({ ...newVm, name: e.target.value })} required />
+          )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          {/* 새 규칙 추가 폼 */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
+            <h3 style={{ marginBottom: '1rem', fontSize: '0.95rem' }}>새 규칙 추가</h3>
+            <form onSubmit={handleCreatePf}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                 <div>
-                  <label>vCPU (Cores)</label>
-                  <input type="number" min={1} value={newVm.vcpu} onChange={e => setNewVm({ ...newVm, vcpu: parseInt(e.target.value) })} required />
+                  <label style={labelStyle}>프로토콜</label>
+                  <select value={newPf.protocol} onChange={e => setNewPf(p => ({ ...p, protocol: e.target.value }))}
+                    style={selectStyle}>
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                  </select>
                 </div>
                 <div>
-                  <label>RAM (GB)</label>
-                  <input type="number" min={1} value={newVm.ram_gb} onChange={e => setNewVm({ ...newVm, ram_gb: parseInt(e.target.value) })} required />
+                  <label style={labelStyle}>내부 포트</label>
+                  <input type="number" min={1} max={65535} value={newPf.internal_port}
+                    onChange={e => setNewPf(p => ({ ...p, internal_port: Number(e.target.value) }))}
+                    style={inputStyle} required />
+                </div>
+                <div>
+                  <label style={labelStyle}>외부 포트 <span style={{ color: 'var(--text-muted)' }}>(자동)</span></label>
+                  <input type="number" min={10000} max={20000} value={newPf.external_port}
+                    onChange={e => setNewPf(p => ({ ...p, external_port: e.target.value }))}
+                    placeholder="자동 배정"
+                    style={inputStyle} />
                 </div>
               </div>
-
-              <label>Disk (GB)</label>
-              <input type="number" min={10} value={newVm.disk_gb} onChange={e => setNewVm({ ...newVm, disk_gb: parseInt(e.target.value) })} required />
-
-              <label>이미지 (OVA)</label>
-              {images.length > 0 ? (
-                <select
-                  value={newVm.image_id}
-                  onChange={e => setNewVm({ ...newVm, image_id: e.target.value })}
-                  required
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid var(--border)', background: 'var(--bg-secondary)', marginBottom: '1rem' }}
-                >
-                  {images.map(img => (
-                    <option key={img.name} value={img.name}>
-                      {img.name} {img.size_gb > 0 ? `(${img.size_gb} GB)` : ''}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  value={newVm.image_id}
-                  onChange={e => setNewVm({ ...newVm, image_id: e.target.value })}
-                  placeholder="OVA 파일명 또는 템플릿 VM 이름"
-                  required
-                />
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={labelStyle}>설명 (선택)</label>
+                <input type="text" value={newPf.description}
+                  onChange={e => setNewPf(p => ({ ...p, description: e.target.value }))}
+                  placeholder="예: SSH, Web, DB"
+                  style={inputStyle} />
+              </div>
+              {pfError && (
+                <div style={errorBoxStyle}>{pfError}</div>
               )}
-
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={isCreating}>
-                  {isCreating ? '요청 중...' : '생성하기'}
-                </button>
-                <button type="button" onClick={() => { setShowCreateModal(false); setCreateError(null); }} style={{ flex: 1, background: 'var(--border)' }}>
-                  취소
-                </button>
-              </div>
+              <button type="submit" className="btn-primary" style={{ width: '100%' }} disabled={pfSubmitting}>
+                {pfSubmitting ? '생성 중...' : '포트포워딩 추가'}
+              </button>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {showJobsModal && createResult && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div className="card" style={{ width: '500px', marginBottom: 0 }}>
-            <h2 style={{ marginBottom: '1.5rem' }}>VM 생성 진행 상황</h2>
+      {/* ── VM 생성 모달 ── */}
+      {showCreateModal && (
+        <Modal onClose={() => { setShowCreateModal(false); setCreateError(null); }} title="새 가상 머신 생성">
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+            SSH 비밀번호는 자동 생성되어 생성 후 목록에서 확인할 수 있습니다.
+          </p>
+          {createError && <div style={errorBoxStyle}>{createError}</div>}
+          <form onSubmit={handleCreateVm}>
+            <label style={labelStyle}>VM 이름</label>
+            <input style={inputStyle} type="text" value={newVm.name}
+              onChange={e => setNewVm(p => ({ ...p, name: e.target.value }))} required />
 
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Job ID</div>
-              <div style={{ fontFamily: 'monospace', padding: '0.5rem', background: 'var(--bg-secondary)', borderRadius: '0.25rem' }}>
-                {createResult.jobId}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={labelStyle}>vCPU</label>
+                <input style={inputStyle} type="number" min={1} value={newVm.vcpu}
+                  onChange={e => setNewVm(p => ({ ...p, vcpu: Number(e.target.value) }))} required />
+              </div>
+              <div>
+                <label style={labelStyle}>RAM (GB)</label>
+                <input style={inputStyle} type="number" min={1} value={newVm.ram_gb}
+                  onChange={e => setNewVm(p => ({ ...p, ram_gb: Number(e.target.value) }))} required />
               </div>
             </div>
 
-            {jobStatus ? (
-              <>
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>상태</div>
-                  <div style={{
-                    padding: '0.5rem 1rem',
-                    borderRadius: '0.5rem',
-                    background: jobStatus.status === 'completed' ? '#dcfce7' : jobStatus.status === 'failed' ? '#fee2e2' : '#fef3c7',
-                    color: jobStatus.status === 'completed' ? '#166534' : jobStatus.status === 'failed' ? '#991b1b' : '#92400e',
-                    fontWeight: 500,
-                  }}>
-                    {jobStatus.status === 'completed' ? '완료됨 — 목록을 확인하세요' : jobStatus.status === 'failed' ? '실패' : '진행 중...'}
-                  </div>
-                </div>
+            <label style={labelStyle}>Disk (GB)</label>
+            <input style={inputStyle} type="number" min={10} value={newVm.disk_gb}
+              onChange={e => setNewVm(p => ({ ...p, disk_gb: Number(e.target.value) }))} required />
 
-                {jobStatus.status === 'running' && (
-                  <div className="progress-bar" style={{ marginBottom: '1rem' }}>
-                    <div className="progress-fill" style={{ width: '100%', background: 'var(--primary)', animation: 'pulse 1.5s infinite' }}></div>
-                  </div>
-                )}
-
-                {jobStatus.error && (
-                  <div style={{ padding: '0.75rem', background: '#fee2e2', color: '#991b1b', borderRadius: '0.5rem', marginBottom: '1rem' }}>
-                    <strong>오류:</strong> {jobStatus.error}
-                  </div>
-                )}
-              </>
+            <label style={labelStyle}>이미지 (OVA)</label>
+            {images.length > 0 ? (
+              <select value={newVm.image_id}
+                onChange={e => setNewVm(p => ({ ...p, image_id: e.target.value }))}
+                style={{ ...selectStyle, marginBottom: '1.25rem' }} required>
+                {images.map(img => (
+                  <option key={img.name} value={img.name}>
+                    {img.name}{img.size_gb > 0 ? ` (${img.size_gb} GB)` : ''}
+                  </option>
+                ))}
+              </select>
             ) : (
-              <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-muted)' }}>
-                예상 대기 시간: {Math.round(createResult.estimatedWait)}초
-              </div>
+              <input style={inputStyle} type="text" value={newVm.image_id}
+                onChange={e => setNewVm(p => ({ ...p, image_id: e.target.value }))}
+                placeholder="OVA 파일명 또는 템플릿 VM 이름" required />
             )}
 
-            <button onClick={() => { setShowJobsModal(false); }} className="btn-primary" style={{ width: '100%' }}>
-              닫기
-            </button>
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+              <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={isCreating}>
+                {isCreating ? '요청 중...' : '생성하기'}
+              </button>
+              <button type="button" onClick={() => { setShowCreateModal(false); setCreateError(null); }}
+                style={{ flex: 1, background: 'var(--border)', border: 'none', borderRadius: '0.375rem', cursor: 'pointer' }}>
+                취소
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── Job 진행 모달 ── */}
+      {showJobsModal && createResult && (
+        <Modal onClose={() => setShowJobsModal(false)} title="VM 생성 진행 상황">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>Job ID</div>
+            <code style={{ display: 'block', padding: '0.5rem', background: 'var(--bg-secondary)', borderRadius: '0.25rem', fontSize: '0.85rem' }}>
+              {createResult.jobId}
+            </code>
           </div>
+          {jobStatus ? (
+            <>
+              <div style={{
+                padding: '0.6rem 1rem', borderRadius: '0.5rem', fontWeight: 500, marginBottom: '1rem',
+                background: jobStatus.status === 'completed' ? '#dcfce7' : jobStatus.status === 'failed' ? '#fee2e2' : '#fef3c7',
+                color: jobStatus.status === 'completed' ? '#166534' : jobStatus.status === 'failed' ? '#991b1b' : '#92400e',
+              }}>
+                {jobStatus.status === 'completed' ? '완료 — VM 목록을 확인하세요' : jobStatus.status === 'failed' ? '실패' : '처리 중...'}
+              </div>
+              {jobStatus.status === 'running' && (
+                <div className="progress-bar" style={{ marginBottom: '1rem' }}>
+                  <div className="progress-fill" style={{ width: '100%', background: 'var(--primary)', animation: 'pulse 1.5s infinite' }} />
+                </div>
+              )}
+              {jobStatus.error && <div style={errorBoxStyle}><strong>오류:</strong> {jobStatus.error}</div>}
+            </>
+          ) : (
+            <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+              예상 대기: {Math.round(createResult.estimatedWait)}초
+            </p>
+          )}
+          <button className="btn-primary" style={{ width: '100%', marginTop: '1rem' }}
+            onClick={() => setShowJobsModal(false)}>닫기</button>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────
+// Sub-components
+// ────────────────────────────────────────────────
+function Modal({ children, onClose, title, width = 520 }: {
+  children: React.ReactNode; onClose: () => void; title: string; width?: number;
+}) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '1rem' }}>
+      <div className="card" style={{ width: '100%', maxWidth: width, maxHeight: '90vh', overflowY: 'auto', marginBottom: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <h2 style={{ margin: 0 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
         </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const color = status === 'running' ? { bg: '#dcfce7', text: '#166534' }
+    : status === 'creating' ? { bg: '#fef3c7', text: '#92400e' }
+    : { bg: '#fee2e2', text: '#991b1b' };
+  return (
+    <span style={{ padding: '0.2rem 0.6rem', borderRadius: '0.25rem', fontSize: '0.82rem', background: color.bg, color: color.text, fontWeight: 500 }}>
+      {status}
+    </span>
+  );
+}
+
+function PasswordCell({ vmId, password, visible, onToggle }: {
+  vmId: string; password: string; visible: boolean; onToggle: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <code style={{ fontSize: '0.88rem' }}>{visible ? password : '••••••••'}</code>
+      <button onClick={onToggle} style={smallBtnStyle}>{visible ? '숨기기' : '보기'}</button>
+      {visible && (
+        <button onClick={() => navigator.clipboard.writeText(password)} style={smallBtnStyle}>복사</button>
       )}
     </div>
   );
@@ -371,8 +533,21 @@ function QuotaItem({ label, used, total, unit }: { label: string; used: number; 
         <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>{used} / {total} {unit}</span>
       </div>
       <div className="progress-bar">
-        <div className="progress-fill" style={{ width: `${percent}%`, background: percent > 90 ? 'var(--error)' : 'var(--primary)' }}></div>
+        <div className="progress-fill" style={{ width: `${percent}%`, background: percent > 90 ? 'var(--error)' : 'var(--primary)' }} />
       </div>
     </div>
   );
 }
+
+// ────────────────────────────────────────────────
+// Shared styles
+// ────────────────────────────────────────────────
+const labelStyle: React.CSSProperties = { display: 'block', fontSize: '0.85rem', marginBottom: '0.3rem', color: 'var(--text-muted)' };
+const inputStyle: React.CSSProperties = { display: 'block', width: '100%', marginBottom: '1rem' };
+const selectStyle: React.CSSProperties = { display: 'block', width: '100%', padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid var(--border)', background: 'var(--bg-secondary)' };
+const errorBoxStyle: React.CSSProperties = { padding: '0.75rem', background: '#fee2e2', color: '#991b1b', borderRadius: '0.5rem', marginBottom: '1rem', fontSize: '0.9rem' };
+const smallBtnStyle: React.CSSProperties = { background: 'none', border: '1px solid var(--border)', borderRadius: '0.25rem', padding: '0.15rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' };
+const deleteBtnStyle: React.CSSProperties = { background: '#fee2e2', color: '#991b1b', border: 'none', borderRadius: '0.25rem', padding: '0.2rem 0.6rem', cursor: 'pointer', fontSize: '0.82rem' };
+const pfBtnStyle: React.CSSProperties = { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.25rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem', whiteSpace: 'nowrap' };
+const protocolBadgeStyle: React.CSSProperties = { background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.78rem', fontWeight: 600 };
+const logoutBtnStyle: React.CSSProperties = { background: 'none', border: '1px solid var(--border)', padding: '0.45rem 1rem', borderRadius: '0.375rem', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem' };
