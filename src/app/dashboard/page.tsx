@@ -212,6 +212,80 @@ export default function DashboardPage() {
     }
   };
 
+  // ── VM 전원 제어 (시작/정지/재시작) ─────────
+  const [actingVmId, setActingVmId] = useState<string | null>(null);
+  const handleVmAction = async (vmId: string, action: 'start' | 'stop' | 'restart') => {
+    const labels = { start: '시작', stop: '정지', restart: '재시작' } as const;
+    setActingVmId(vmId);
+    try {
+      const res = await authFetch(`/api/vms/${vmId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`${labels[action]} 실패: ${data.message || data.error || ''}`);
+      }
+      fetchData();
+    } catch {
+      alert('네트워크 오류');
+    } finally {
+      setActingVmId(null);
+    }
+  };
+
+  // ── VM 사양 변경 ──────────────────────────────
+  const [specVm, setSpecVm] = useState<Vm | null>(null);
+  const [specForm, setSpecForm] = useState({ vcpu: 2, ram_gb: 4 });
+  const [specError, setSpecError] = useState<string | null>(null);
+  const [specSubmitting, setSpecSubmitting] = useState(false);
+  const openSpecModal = (vm: Vm) => {
+    setSpecVm(vm);
+    setSpecForm({ vcpu: vm.vcpu, ram_gb: vm.ram_gb });
+    setSpecError(null);
+  };
+  const handleSpecSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!specVm) return;
+    setSpecSubmitting(true);
+    setSpecError(null);
+    try {
+      const res = await authFetch(`/api/vms/${specVm.vm_id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ vcpu: specForm.vcpu, ram_gb: specForm.ram_gb }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSpecError(data.message || data.error || '변경 실패');
+        return;
+      }
+      setSpecVm(null);
+      fetchData();
+    } catch {
+      setSpecError('네트워크 오류');
+    } finally {
+      setSpecSubmitting(false);
+    }
+  };
+
+  // ── VM 삭제 ───────────────────────────────────
+  const handleDeleteVm = async (vmId: string, vmName: string) => {
+    if (!confirm(`정말 "${vmName}"을(를) 삭제하시겠습니까? 디스크와 포트포워딩까지 모두 제거됩니다.`)) return;
+    setActingVmId(vmId);
+    try {
+      const res = await authFetch(`/api/vms/${vmId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`삭제 실패: ${data.message || data.error || ''}`);
+      }
+      fetchData();
+    } catch {
+      alert('네트워크 오류');
+    } finally {
+      setActingVmId(null);
+    }
+  };
+
   // ── 웹콘솔 열기 ───────────────────────────────
   const handleOpenConsole = async (vmId: string) => {
     try {
@@ -295,12 +369,13 @@ export default function DashboardPage() {
               <th>SSH 비밀번호</th>
               <th>포트포워딩</th>
               <th>콘솔</th>
+              <th>작업</th>
               <th>생성일</th>
             </tr>
           </thead>
           <tbody>
             {vms.length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
             ) : vms.map(vm => (
               <tr key={vm.vm_id}>
                 <td style={{ fontWeight: 500 }}>{vm.name}</td>
@@ -334,6 +409,50 @@ export default function DashboardPage() {
                   >
                     콘솔 열기
                   </button>
+                </td>
+                <td>
+                  <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => handleVmAction(vm.vm_id, 'start')}
+                      style={pfBtnStyle}
+                      disabled={actingVmId === vm.vm_id || vm.status === 'running' || vm.status === 'starting'}
+                      title="VM 시작"
+                    >
+                      ▶
+                    </button>
+                    <button
+                      onClick={() => handleVmAction(vm.vm_id, 'stop')}
+                      style={pfBtnStyle}
+                      disabled={actingVmId === vm.vm_id || vm.status !== 'running'}
+                      title="VM 정지 (강제 종료)"
+                    >
+                      ■
+                    </button>
+                    <button
+                      onClick={() => handleVmAction(vm.vm_id, 'restart')}
+                      style={pfBtnStyle}
+                      disabled={actingVmId === vm.vm_id || vm.status !== 'running'}
+                      title="VM 재시작 (하드 리셋)"
+                    >
+                      ↻
+                    </button>
+                    <button
+                      onClick={() => openSpecModal(vm)}
+                      style={pfBtnStyle}
+                      disabled={actingVmId === vm.vm_id || vm.status === 'running' || vm.status === 'starting'}
+                      title={vm.status === 'running' || vm.status === 'starting' ? 'VM 정지 후 사양 변경 가능' : 'CPU/RAM 사양 변경'}
+                    >
+                      사양
+                    </button>
+                    <button
+                      onClick={() => handleDeleteVm(vm.vm_id, vm.name)}
+                      style={deleteBtnStyle}
+                      disabled={actingVmId === vm.vm_id}
+                      title="VM 삭제 (디스크 포함)"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </td>
                 <td style={{ fontSize: '0.85rem' }}>{new Date(vm.created_at).toLocaleDateString()}</td>
               </tr>
@@ -431,6 +550,41 @@ export default function DashboardPage() {
               </button>
             </form>
           </div>
+        </Modal>
+      )}
+
+      {/* ── 사양 변경 모달 ── */}
+      {specVm && (
+        <Modal onClose={() => setSpecVm(null)} title={`사양 변경 — ${specVm.name}`} width={420}>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+            현재: {specVm.vcpu} vCPU / {specVm.ram_gb} GB RAM
+          </p>
+          {specError && <div style={errorBoxStyle}>{specError}</div>}
+          <form onSubmit={handleSpecSubmit}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={labelStyle}>vCPU</label>
+                <input type="number" min={1} max={64} value={specForm.vcpu}
+                  onChange={e => setSpecForm(p => ({ ...p, vcpu: Number(e.target.value) }))}
+                  style={inputStyle} required />
+              </div>
+              <div>
+                <label style={labelStyle}>RAM (GB)</label>
+                <input type="number" min={1} max={256} value={specForm.ram_gb}
+                  onChange={e => setSpecForm(p => ({ ...p, ram_gb: Number(e.target.value) }))}
+                  style={inputStyle} required />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+              <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={specSubmitting}>
+                {specSubmitting ? '변경 중...' : '저장'}
+              </button>
+              <button type="button" onClick={() => setSpecVm(null)}
+                style={{ flex: 1, background: 'var(--border)', border: 'none', borderRadius: '0.375rem', cursor: 'pointer' }}>
+                취소
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
 

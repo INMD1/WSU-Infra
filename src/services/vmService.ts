@@ -223,6 +223,14 @@ export const vmService = {
     return true;
   },
 
+  async updateVmSpec(id: string, spec: { vcpu?: number; ram_gb?: number }) {
+    const patch: Record<string, any> = { updated_at: new Date() };
+    if (typeof spec.vcpu === 'number') patch.vcpu = spec.vcpu;
+    if (typeof spec.ram_gb === 'number') patch.ram_gb = spec.ram_gb;
+    await db.update(vms).set(patch).where(eq(vms.vm_id, id));
+    return true;
+  },
+
   getQueueStatus() {
     return jobQueue.getStatus();
   },

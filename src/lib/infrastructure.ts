@@ -696,6 +696,13 @@ const govcStrategy = {
     if (!url || !url.startsWith('http')) {
       throw new Error(`Unexpected console URL output: ${stdout}`);
     }
+    // sessionTicket 포함 여부 로그 — 미포함이면 vCenter 가 로그인 페이지로 redirect 함
+    const hasTicket = /sessionTicket=|ticket=/.test(url);
+    console.log(`[govc] Console URL for ${name}: ${url}`);
+    if (!hasTicket) {
+      console.warn(`[govc] Console URL has no sessionTicket — vCenter may require login. ` +
+        `Check that the user "${env.GOVC_USERNAME}" has "Sessions.AcquireCloneTicket" / "Sessions.ValidateSession" permissions.`);
+    }
     return url;
   },
 
@@ -915,9 +922,29 @@ export const esxiClient = {
     return await this.strategy.getConsoleUrl(name);
   },
 
-  async powerOff(name: string) {
+  async powerOn(name: string) {
     const env = (govcStrategy as any).getEnv();
-    return await execPromise(`govc vm.power -off "${name}"`, { env });
+    return await execPromise(`govc vm.power -on "${name}"`, { env });
+  },
+
+  async changeVmSpec(name: string, spec: { vcpu?: number; ram_gb?: number }) {
+    const env = (govcStrategy as any).getEnv();
+    const flags: string[] = [];
+    if (typeof spec.vcpu === 'number') flags.push(`-c=${spec.vcpu}`);
+    if (typeof spec.ram_gb === 'number') flags.push(`-m=${spec.ram_gb * 1024}`);
+    if (flags.length === 0) return;
+    await execPromise(`govc vm.change -vm="${name}" ${flags.join(' ')}`, { env });
+  },
+
+  async powerOff(name: string, force = true) {
+    const env = (govcStrategy as any).getEnv();
+    const flag = force ? '-off -force' : '-off';
+    return await execPromise(`govc vm.power ${flag} "${name}"`, { env });
+  },
+
+  async resetVm(name: string) {
+    const env = (govcStrategy as any).getEnv();
+    return await execPromise(`govc vm.power -reset "${name}"`, { env });
   },
 
   // Datastore 관련
@@ -1052,24 +1079,38 @@ export const pfsenseClient = {
   async addPortForward(params: PortForwardParams): Promise<PortForwardResult> {
     this.assertConfigured();
     const protocol = params.protocol || 'tcp';
-    const res = await this.fetchWithTls(`${this.getUrl()}/api/v2/firewall/nat/port_forward`, {
+    const requestBody = {
+      interface: 'wan',
+      ipprotocol: 'inet',
+      protocol,
+      source: 'any',
+      source_port: null,
+      destination: 'wan:ip',
+      destination_port: String(params.externalPort),
+      target: params.internalIp,
+      local_port: String(params.internalPort),
+      descr: params.description || `Forward ${params.internalIp}:${params.internalPort}`,
+      associated_rule_id: 'pass',
+    };
+    const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward`;
+    console.log(`[pfSense] POST ${url}\n  body=${JSON.stringify(requestBody)}`);
+
+    const res = await this.fetchWithTls(url, {
       method: 'POST',
-      body: JSON.stringify({
-        interface: 'wan',
-        ipprotocol: 'inet',
-        protocol,
-        source: 'any',
-        source_port: null,
-        destination: 'wan:ip',
-        destination_port: String(params.externalPort),
-        target: params.internalIp,
-        local_port: String(params.internalPort),
-        descr: params.description || `Forward ${params.internalIp}:${params.internalPort}`,
-        associated_rule_id: 'pass',
-      }),
+      body: JSON.stringify(requestBody),
     });
-    const json = await res.json() as any;
-    if (json.code !== 200) throw new Error('pfSense NAT rule creation failed');
+    const rawText = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(rawText); } catch { /* non-JSON response */ }
+
+    console.log(`[pfSense] response status=${res.status}, body=${rawText.slice(0, 800)}`);
+
+    if (!json || json.code !== 200) {
+      const detail = json
+        ? `code=${json.code}, message=${json.message ?? '(none)'}, response_id=${json.response_id ?? '(none)'}, data=${JSON.stringify(json.data ?? null)}`
+        : `non-JSON response`;
+      throw new Error(`pfSense NAT rule creation failed: HTTP ${res.status}, ${detail}`);
+    }
 
     await this.applyFirewall();
 
