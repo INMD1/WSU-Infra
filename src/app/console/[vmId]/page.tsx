@@ -44,6 +44,7 @@ export default function ConsolePage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<MksInfo | null>(null);
   const [jqueryReady, setJqueryReady] = useState(false);
+  const [jqueryUiReady, setJqueryUiReady] = useState(false);
   const [wmksReady, setWmksReady] = useState(false);
   const wmksRef = useRef<any>(null);
 
@@ -81,22 +82,25 @@ export default function ConsolePage() {
       console.log('[wmks] window.WMKS keys:', W ? Object.keys(W) : '(undefined)');
       if ($) console.log('[wmks] jQuery available:', typeof $);
 
-      // vmware-wmks 패키지는 버전마다 factory 이름이 다름. 여러 후보 시도.
-      let inst: any = null;
+      // vmware-wmks@1.0.0 은 jQuery UI widget. WMKS.widgetProto 를 $.widget() 으로 등록.
       const opts = { useUnicodeKeyboardInput: true, rescale: true };
-      if (W?.createWMKS) {
-        inst = W.createWMKS('mks-container', opts);
-      } else if (W?.WMKS) {
-        inst = new W.WMKS('mks-container', opts);
-      } else if (typeof W === 'function') {
-        inst = new W('mks-container', opts);
-      } else if ($ && $.fn?.wmks) {
-        // jQuery 플러그인 형태
-        inst = $('#mks-container').wmks(opts).data('wmks');
-      } else {
-        throw new Error(
-          `WMKS factory 를 찾지 못함. window.WMKS 구조: ${W ? JSON.stringify(Object.keys(W)) : 'undefined'}`
-        );
+      if (!$ || !$.widget) {
+        throw new Error('jQuery UI Widget Factory 가 로드되지 않음');
+      }
+      if (!$.fn.wmks) {
+        if (!W?.widgetProto) {
+          throw new Error(`WMKS.widgetProto 없음 — keys=${JSON.stringify(Object.keys(W))}`);
+        }
+        $.widget('wmks.wmks', W.widgetProto);
+        console.log('[wmks] $.widget("wmks.wmks", widgetProto) 등록 완료');
+      }
+
+      const $container = $('#mks-container');
+      $container.wmks(opts);
+      // jQuery UI widget data key: <namespace>-<name>
+      const inst: any = $container.data('wmks-wmks') ?? $container.data('wmks');
+      if (!inst) {
+        throw new Error('wmks 인스턴스 획득 실패 — $container.data() 비어있음');
       }
 
       const wssUrl = `wss://${info.host}:${info.port}/ticket/${info.ticket}`;
@@ -126,15 +130,24 @@ export default function ConsolePage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#000', color: '#fff' }}>
       {/* VMware WMKS CSS (jsDelivr) */}
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vmware-wmks@1.0.0/css/css/wmks-all.min.css" />
-      {/* WMKS 는 jQuery 의존 — 먼저 로드 */}
+      {/* 1) jQuery 먼저 */}
       <Script
         src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
         strategy="afterInteractive"
         onLoad={() => setJqueryReady(true)}
         onError={() => setError('jQuery 로드 실패')}
       />
-      {/* jQuery 로드 후 WMKS 로드 */}
+      {/* 2) jQuery UI Widget Factory — wmks 가 widget 으로 등록되려면 필요 */}
       {jqueryReady && (
+        <Script
+          src="https://cdn.jsdelivr.net/npm/jquery-ui@1.13.2/dist/jquery-ui.min.js"
+          strategy="afterInteractive"
+          onLoad={() => setJqueryUiReady(true)}
+          onError={() => setError('jQuery UI 로드 실패')}
+        />
+      )}
+      {/* 3) WMKS */}
+      {jqueryUiReady && (
         <Script
           src="https://cdn.jsdelivr.net/npm/vmware-wmks@1.0.0/wmks.min.js"
           strategy="afterInteractive"
