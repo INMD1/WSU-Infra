@@ -21,6 +21,7 @@ async function processVmCreateJob(jobData: any): Promise<any> {
   const vmPassword = data.password || generateVmPassword();
 
   try {
+    let earlyInserted = false;
     const provisioned = await esxiClient.createVmFromTemplate({
       name: data.name,
       template: data.image_id,
@@ -28,26 +29,56 @@ async function processVmCreateJob(jobData: any): Promise<any> {
       ram_gb: data.ram_gb,
       ssh_public_key: data.ssh_public_key,
       password: vmPassword,
+      // Power-on 직후 호출 — IP 받기 전에 row 를 만들어 대시보드에 즉시 노출
+      onPowerOn: async (info) => {
+        await db.insert(vms).values({
+          vm_id: info.vm_id,
+          name: data.name,
+          status: 'starting',
+          vcpu: data.vcpu,
+          ram_gb: data.ram_gb,
+          disk_gb: data.disk_gb,
+          image_id: data.image_id,
+          ssh_host: '',
+          ssh_port: 22,
+          internal_ip: '',
+          esxi_moref: info.moref,
+          ssh_public_key: data.ssh_public_key,
+          vm_password: vmPassword,
+          owner_id: data.owner_id || null,
+        });
+        earlyInserted = true;
+        console.log(`[VM Service] VM ${info.vm_id} 등록(starting) — IP 대기 중`);
+      },
     });
 
-    console.log(`[VM Service] VM provisioned: ${provisioned.vm_id}`);
+    console.log(`[VM Service] VM provisioned: ${provisioned.vm_id} → ${provisioned.ip_address}`);
 
-    await db.insert(vms).values({
-      vm_id: provisioned.vm_id,
-      name: data.name,
-      status: provisioned.status as any,
-      vcpu: data.vcpu,
-      ram_gb: data.ram_gb,
-      disk_gb: data.disk_gb,
-      image_id: data.image_id,
-      ssh_host: provisioned.ip_address || '',
-      ssh_port: 22,
-      internal_ip: provisioned.ip_address || '',
-      esxi_moref: provisioned.moref,
-      ssh_public_key: data.ssh_public_key,
-      vm_password: vmPassword,
-      owner_id: data.owner_id || null,
-    });
+    if (earlyInserted) {
+      await db.update(vms).set({
+        status: provisioned.status as any,
+        ssh_host: provisioned.ip_address || '',
+        internal_ip: provisioned.ip_address || '',
+      }).where(eq(vms.vm_id, provisioned.vm_id));
+    } else {
+      // 콜백 실패한 경우의 폴백 insert
+      await db.insert(vms).values({
+        vm_id: provisioned.vm_id,
+        name: data.name,
+        status: provisioned.status as any,
+        vcpu: data.vcpu,
+        ram_gb: data.ram_gb,
+        disk_gb: data.disk_gb,
+        image_id: data.image_id,
+        ssh_host: provisioned.ip_address || '',
+        ssh_port: 22,
+        internal_ip: provisioned.ip_address || '',
+        esxi_moref: provisioned.moref,
+        ssh_public_key: data.ssh_public_key,
+        vm_password: vmPassword,
+        owner_id: data.owner_id || null,
+      });
+    }
 
     // 자동 SSH 포트포워딩 (실패해도 VM 생성 자체는 성공)
     let autoSshPort: number | null = null;

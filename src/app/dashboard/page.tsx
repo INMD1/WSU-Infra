@@ -155,8 +155,9 @@ export default function DashboardPage() {
         const res = await authFetch(`/api/jobs/${jobId}`);
         const data = await res.json();
         setJobStatus(data);
+        // VM 리스트도 함께 갱신 — power-on 직후 등록된 VM 을 IP 대기 중에도 즉시 노출
+        fetchData();
         if (data.status === 'completed' || data.status === 'failed') {
-          fetchData();
           setTimeout(() => { setCreateResult(null); setJobStatus(null); setShowJobsModal(false); }, 3000);
           return;
         }
@@ -561,7 +562,7 @@ function Modal({ children, onClose, title, width = 520 }: {
 
 function StatusBadge({ status }: { status: string }) {
   const color = status === 'running' ? { bg: '#dcfce7', text: '#166534' }
-    : status === 'creating' ? { bg: '#fef3c7', text: '#92400e' }
+    : status === 'creating' || status === 'starting' ? { bg: '#fef3c7', text: '#92400e' }
     : { bg: '#fee2e2', text: '#991b1b' };
   return (
     <span style={{ padding: '0.2rem 0.6rem', borderRadius: '0.25rem', fontSize: '0.82rem', background: color.bg, color: color.text, fontWeight: 500 }}>

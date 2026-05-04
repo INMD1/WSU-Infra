@@ -20,6 +20,8 @@ interface VmCreateParams {
   resource_pool?: string;
   datastore?: string;
   host?: string;
+  /** Power-on 직후, IP 대기 전에 호출 — 호출자가 미리 DB row 를 만들어 UI 에 즉시 노출 가능 */
+  onPowerOn?: (info: { vm_id: string; moref: string }) => Promise<void> | void;
 }
 
 interface HostInfo {
@@ -426,7 +428,19 @@ const govcStrategy = {
   async injectCloudInitViaExtraConfig(vmName: string, sshKey?: string, password?: string): Promise<void> {
     const env = this.getEnv();
     const userData = this.buildCloudInitUserData(vmName, sshKey, password);
-    const metaData = `instance-id: ${vmName}\nhostname: ${vmName}\n`;
+    // metadata 안에 network-config 를 인라인으로 넣어 cloud-init 가 부팅 시 dhcp4 활성화
+    // (이름 매칭 패턴으로 ens*/eth*/enp* 등 게스트 OS 이름 차이 흡수)
+    const metaData =
+      `instance-id: ${vmName}\n` +
+      `local-hostname: ${vmName}\n` +
+      `network:\n` +
+      `  version: 2\n` +
+      `  ethernets:\n` +
+      `    id0:\n` +
+      `      match:\n` +
+      `        name: "e*"\n` +
+      `      dhcp4: true\n` +
+      `      dhcp6: false\n`;
 
     const userDataB64 = Buffer.from(userData).toString('base64');
     const metaDataB64 = Buffer.from(metaData).toString('base64');
@@ -521,23 +535,46 @@ const govcStrategy = {
       console.log(`[govc] Powering on VM...`);
       await execPromise(`govc vm.power -on "${params.name}"`, { env });
 
+      // Power-on 직후 vm.info 로 vm_id/moref 즉시 확보 — 호출자가 IP 대기 전에 DB 등록 가능
+      let earlyVmId = '';
+      let earlyMoref = '';
+      try {
+        const { stdout } = await execPromise(`govc vm.info -json "${params.name}"`, { env });
+        const info = JSON.parse(stdout);
+        const vm = info?.VirtualMachines?.[0];
+        earlyVmId = vm?.Config?.Uuid ?? '';
+        earlyMoref = vm?.Self?.Value ?? '';
+        if (params.onPowerOn && earlyVmId) {
+          await Promise.resolve(params.onPowerOn({ vm_id: earlyVmId, moref: earlyMoref }))
+            .catch(err => console.warn(`[govc] onPowerOn callback error:`, err?.message ?? err));
+        }
+      } catch (err) {
+        console.warn(`[govc] Early vm.info failed (will retry after IP):`, err);
+      }
+
       // 7. Wait for IP
       console.log(`[govc] Waiting for IP address (timeout 5m)...`);
       const { stdout: ipStdout } = await execPromise(`govc vm.ip -wait=5m "${params.name}"`, { env });
       const ipAddress = ipStdout.trim();
 
-      // 8. Info Retrieval
-      const { stdout: infoStdout } = await execPromise(`govc vm.info -json "${params.name}"`, { env });
-      const info = JSON.parse(infoStdout);
+      // 8. Info Retrieval (IP 받은 후 최종 확인 — moref/uuid 가 이른 단계에서 못 얻혔으면 여기서 보강)
+      let vm_id = earlyVmId;
+      let moref = earlyMoref;
+      if (!vm_id || !moref) {
+        const { stdout: infoStdout } = await execPromise(`govc vm.info -json "${params.name}"`, { env });
+        const info = JSON.parse(infoStdout);
+        vm_id = info.VirtualMachines[0].Config.Uuid;
+        moref = info.VirtualMachines[0].Self.Value;
+      }
 
       // Cleanup local ISO
       if (isoPath) await fs.unlink(isoPath).catch(() => {});
 
       return {
-        vm_id: info.VirtualMachines[0].Config.Uuid,
+        vm_id,
         status: 'running',
         ip_address: ipAddress,
-        moref: info.VirtualMachines[0].Self.Value
+        moref,
       };
 
     } catch (error) {
