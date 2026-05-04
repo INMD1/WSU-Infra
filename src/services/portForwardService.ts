@@ -103,57 +103,78 @@ export const portForwardService = {
     validateInput(params);
     await checkQuota(params.tenantId);
 
-    const externalPort = await allocateExternalPort(params.externalPort);
     const protocol = params.protocol || 'tcp';
 
-    // Create rule in pfSense first
-    const result = await pfsenseClient.addPortForward({
-      internalIp: params.internalIp,
-      internalPort: params.internalPort,
-      externalPort,
-      protocol,
-      description: params.description,
-    });
+    // 동시 요청으로 같은 외부 포트가 동시에 할당되는 race 처리:
+    // 사용자가 명시적으로 포트를 지정하지 않은 경우(자동 배정)에 한해 최대 5번 재시도.
+    const maxAttempts = params.externalPort === undefined ? 5 : 1;
+    let lastError: any = null;
+    let attemptedPorts = new Set<number>();
 
-    // Persist to DB — if this fails (e.g. race condition on unique port), roll back pfSense rule
-    const id = uuidv4();
-    try {
-      await db.insert(portForwards).values({
-        id,
-        vm_id: params.vmId || null,
-        owner_id: params.ownerId || null,
-        tenant_id: params.tenantId,
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const externalPort = await allocateExternalPort(params.externalPort);
+
+      // 같은 포트로 다시 시도되는 무한 루프 방지 (자동 배정에서 다른 후보를 고를 수 있도록)
+      if (params.externalPort === undefined && attemptedPorts.has(externalPort)) {
+        await new Promise(r => setTimeout(r, 50 * (attempt + 1)));
+      }
+      attemptedPorts.add(externalPort);
+
+      // Create rule in pfSense first
+      const result = await pfsenseClient.addPortForward({
+        internalIp: params.internalIp,
+        internalPort: params.internalPort,
+        externalPort,
         protocol,
+        description: params.description,
+      });
+
+      // Persist to DB — if duplicate port (race), rollback pfSense and retry with next port
+      const id = uuidv4();
+      try {
+        await db.insert(portForwards).values({
+          id,
+          vm_id: params.vmId || null,
+          owner_id: params.ownerId || null,
+          tenant_id: params.tenantId,
+          protocol,
+          internal_ip: params.internalIp,
+          internal_port: params.internalPort,
+          external_ip: result.externalIp,
+          external_port: externalPort,
+          pfsense_tracker: result.tracker,
+          description: params.description || null,
+        });
+      } catch (dbError: any) {
+        try {
+          await pfsenseClient.deletePortForward(result.tracker);
+        } catch (rollbackErr) {
+          console.error('[PortForward] pfSense rollback failed after DB error:', rollbackErr);
+        }
+        if (dbError.code === 'ER_DUP_ENTRY' && attempt < maxAttempts - 1) {
+          console.warn(`[PortForward] external_port ${externalPort} race — retry ${attempt + 1}/${maxAttempts - 1}`);
+          lastError = dbError;
+          continue;
+        }
+        if (dbError.code === 'ER_DUP_ENTRY') {
+          throw new ValidationError(`External port ${externalPort} was taken by a concurrent request. Retry.`);
+        }
+        throw dbError;
+      }
+
+      // 성공
+      return {
+        id,
         internal_ip: params.internalIp,
         internal_port: params.internalPort,
         external_ip: result.externalIp,
         external_port: externalPort,
-        pfsense_tracker: result.tracker,
-        description: params.description || null,
-      });
-    } catch (dbError: any) {
-      // Rollback pfSense rule to avoid dangling NAT entries
-      try {
-        await pfsenseClient.deletePortForward(result.tracker);
-      } catch (rollbackErr) {
-        console.error('[PortForward] pfSense rollback failed after DB error:', rollbackErr);
-      }
-      // Duplicate port from concurrent request
-      if (dbError.code === 'ER_DUP_ENTRY') {
-        throw new ValidationError(`External port ${externalPort} was taken by a concurrent request. Retry.`);
-      }
-      throw dbError;
+        protocol,
+        description: params.description,
+      };
     }
 
-    return {
-      id,
-      internal_ip: params.internalIp,
-      internal_port: params.internalPort,
-      external_ip: result.externalIp,
-      external_port: externalPort,
-      protocol,
-      description: params.description,
-    };
+    throw lastError ?? new Error('PortForward create: exhausted retries');
   },
 
   async delete(id: string, tenantId: string) {

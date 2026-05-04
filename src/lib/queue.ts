@@ -158,5 +158,17 @@ declare global {
   // eslint-disable-next-line no-var
   var __wsuJobQueue: JobQueue | undefined;
 }
+
+const MAX_CONCURRENT = (() => {
+  const raw = Number(process.env.MAX_CONCURRENT_JOBS);
+  if (Number.isFinite(raw) && raw > 0 && raw <= 100) return Math.floor(raw);
+  return 10;
+})();
+
+if (!globalThis.__wsuJobQueue) {
+  console.log(`[Queue] Initialized with maxConcurrent=${MAX_CONCURRENT} ` +
+    `(set MAX_CONCURRENT_JOBS env to override; clamp 1..100)`);
+}
+
 export const jobQueue: JobQueue =
-  globalThis.__wsuJobQueue ?? (globalThis.__wsuJobQueue = new JobQueue(3));
+  globalThis.__wsuJobQueue ?? (globalThis.__wsuJobQueue = new JobQueue(MAX_CONCURRENT));
