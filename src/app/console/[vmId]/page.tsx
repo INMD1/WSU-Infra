@@ -43,6 +43,7 @@ export default function ConsolePage() {
   const [status, setStatus] = useState<string>('초기화 중...');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<MksInfo | null>(null);
+  const [jqueryReady, setJqueryReady] = useState(false);
   const [wmksReady, setWmksReady] = useState(false);
   const wmksRef = useRef<any>(null);
 
@@ -110,12 +111,24 @@ export default function ConsolePage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#000', color: '#fff' }}>
+      {/* VMware WMKS CSS (jsDelivr) */}
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vmware-wmks@1.0.0/css/css/wmks-all.min.css" />
+      {/* WMKS 는 jQuery 의존 — 먼저 로드 */}
       <Script
-        src="/lib/wmks/wmks.min.js"
+        src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
         strategy="afterInteractive"
-        onLoad={() => setWmksReady(true)}
-        onError={() => setError('wmks.js 로드 실패 — public/lib/wmks/wmks.min.js 가 있는지 확인')}
+        onLoad={() => setJqueryReady(true)}
+        onError={() => setError('jQuery 로드 실패')}
       />
+      {/* jQuery 로드 후 WMKS 로드 */}
+      {jqueryReady && (
+        <Script
+          src="https://cdn.jsdelivr.net/npm/vmware-wmks@1.0.0/wmks.min.js"
+          strategy="afterInteractive"
+          onLoad={() => setWmksReady(true)}
+          onError={() => setError('wmks.js 로드 실패 (jsDelivr 접근 불가일 수 있음)')}
+        />
+      )}
       <header style={{ padding: '0.5rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1a1a1a', borderBottom: '1px solid #333' }}>
         <div>
           <strong>{info?.vm_name ?? 'VM 콘솔'}</strong>

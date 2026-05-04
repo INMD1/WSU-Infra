@@ -355,7 +355,6 @@ export default function DashboardPage() {
               <th>이름</th>
               <th>상태</th>
               <th>사양</th>
-              <th>IP</th>
               <th>SSH 비밀번호</th>
               <th>포트포워딩</th>
               <th>콘솔</th>
@@ -365,13 +364,12 @@ export default function DashboardPage() {
           </thead>
           <tbody>
             {vms.length === 0 ? (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
             ) : vms.map(vm => (
               <tr key={vm.vm_id}>
                 <td style={{ fontWeight: 500 }}>{vm.name}</td>
                 <td><StatusBadge status={vm.status} /></td>
                 <td style={{ fontSize: '0.85rem' }}>{vm.vcpu}C / {vm.ram_gb}GB / {vm.disk_gb}GB</td>
-                <td style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>{vm.internal_ip || '—'}</td>
                 <td>
                   {vm.vm_password ? (
                     <PasswordCell vmId={vm.vm_id} password={vm.vm_password}
