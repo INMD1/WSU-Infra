@@ -609,24 +609,66 @@ export default function DashboardPage() {
             <input style={inputStyle} type="number" min={10} value={newVm.disk_gb}
               onChange={e => setNewVm(p => ({ ...p, disk_gb: Number(e.target.value) }))} required />
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={labelStyle}>이미지 (Content Library)</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <label style={labelStyle}>이미지 선택 (Content Library)</label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
                 <input type="checkbox" checked={includeAllImages}
                   onChange={e => setIncludeAllImages(e.target.checked)} />
                 ISO 등 모든 항목 표시
               </label>
             </div>
+            
             {images.length > 0 ? (
-              <select value={newVm.image_id}
-                onChange={e => setNewVm(p => ({ ...p, image_id: e.target.value }))}
-                style={{ ...selectStyle, marginBottom: '0.5rem' }} required>
-                {images.map(img => (
-                  <option key={img.library_path} value={img.library_path}>
-                    [{img.type.toUpperCase()}] {img.name}{img.size_gb > 0 ? ` (${img.size_gb} GB)` : ''}
-                  </option>
-                ))}
-              </select>
+              <div style={imageGridStyle}>
+                {images.map(img => {
+                  const isSelected = newVm.image_id === img.library_path;
+                  const isDeployable = img.type === 'ova' || img.type === 'ovf';
+                  return (
+                    <div 
+                      key={img.library_path}
+                      onClick={() => setNewVm(p => ({ ...p, image_id: img.library_path }))}
+                      style={{
+                        ...imageCardStyle,
+                        borderColor: isSelected ? 'var(--primary)' : 'var(--border)',
+                        backgroundColor: isSelected ? 'var(--bg-primary)' : 'var(--bg-secondary)',
+                        opacity: isDeployable || isSelected ? 1 : 0.7
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
+                        <span style={{ 
+                          ...typeBadgeStyle, 
+                          backgroundColor: img.type === 'ova' ? '#dbeafe' : '#f3f4f6',
+                          color: img.type === 'ova' ? '#1e40af' : '#374151'
+                        }}>
+                          {img.type.toUpperCase()}
+                        </span>
+                        {img.size_gb > 0 && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {img.size_gb} GB
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.9rem', 
+                        fontWeight: isSelected ? 600 : 400,
+                        wordBreak: 'break-all',
+                        color: isSelected ? 'var(--primary)' : 'var(--text-main)'
+                      }}>
+                        {img.name}
+                      </div>
+                      {isSelected && (
+                        <div style={{ 
+                          position: 'absolute', top: '-5px', right: '-5px', 
+                          background: 'var(--primary)', color: 'white', 
+                          width: '18px', height: '18px', borderRadius: '50%', 
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '10px', fontWeight: 'bold'
+                        }}>✓</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               <div style={{ ...errorBoxStyle, background: '#fef3c7', color: '#92400e' }}>
                 {includeAllImages
@@ -634,6 +676,7 @@ export default function DashboardPage() {
                   : 'OVA/OVF 항목이 없습니다. ISO도 표시하려면 위 체크박스를 켜세요.'}
               </div>
             )}
+
             {newVm.image_id && (() => {
               const sel = images.find(i => i.library_path === newVm.image_id);
               if (sel && sel.type !== 'ova' && sel.type !== 'ovf') {
@@ -768,3 +811,37 @@ const deleteBtnStyle: React.CSSProperties = { background: '#fee2e2', color: '#99
 const pfBtnStyle: React.CSSProperties = { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '0.375rem', padding: '0.25rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem', whiteSpace: 'nowrap' };
 const protocolBadgeStyle: React.CSSProperties = { background: '#dbeafe', color: '#1e40af', padding: '0.15rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.78rem', fontWeight: 600 };
 const logoutBtnStyle: React.CSSProperties = { background: 'none', border: '1px solid var(--border)', padding: '0.45rem 1rem', borderRadius: '0.375rem', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem' };
+
+const imageGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+  gap: '0.75rem',
+  maxHeight: '300px',
+  overflowY: 'auto',
+  padding: '0.5rem',
+  border: '1px solid var(--border)',
+  borderRadius: '0.5rem',
+  marginBottom: '1rem',
+  background: 'var(--bg-secondary)'
+};
+
+const imageCardStyle: React.CSSProperties = {
+  position: 'relative',
+  padding: '0.75rem',
+  borderRadius: '0.5rem',
+  border: '2px solid transparent',
+  cursor: 'pointer',
+  transition: 'all 0.2s ease',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'space-between',
+  minHeight: '80px'
+};
+
+const typeBadgeStyle: React.CSSProperties = {
+  fontSize: '0.7rem',
+  padding: '0.1rem 0.4rem',
+  borderRadius: '0.25rem',
+  fontWeight: 700,
+  textTransform: 'uppercase'
+};
