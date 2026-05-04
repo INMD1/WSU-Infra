@@ -458,10 +458,10 @@ const govcStrategy = {
     } catch (error) {
       console.error(`[govc] Provisioning failed for ${params.name}:`, error);
 
-      // Rollback: Destroy VM on failure
+      // Rollback: Destroy VM on failure (power-off + destroy + ISO 정리)
       try {
         console.log(`[govc] Rolling back: destroying VM ${createdVmName}...`);
-        await execPromise(`govc vm.destroy "${createdVmName}"`, { env });
+        await this.destroyVm(createdVmName);
         console.log(`[govc] Rollback completed: VM ${createdVmName} destroyed.`);
       } catch (rollbackError) {
         console.warn(`[govc] Rollback warning for ${createdVmName}:`, rollbackError);
@@ -472,6 +472,27 @@ const govcStrategy = {
 
       throw error;
     }
+  },
+
+  /**
+   * VM 파괴 (디스크 포함). vm.destroy 는 Destroy_Task 를 수행하여
+   * VM 폴더의 vmdk/nvram/vmx 파일을 함께 제거함.
+   * cloud-init ISO 가 별도 데이터스토어에 업로드된 경우 추가 정리.
+   */
+  async destroyVm(name: string): Promise<void> {
+    const env = this.getEnv();
+    // 1) 켜져 있으면 강제 종료. 이미 꺼져 있어도 진행.
+    await execPromise(`govc vm.power -off -force "${name}"`, { env }).catch(() => {});
+    // 2) VM 파괴 (vmdk 함께 정리)
+    await execPromise(`govc vm.destroy "${name}"`, { env });
+    // 3) cloud-init ISO 잔여물 정리 (없으면 무시)
+    const isoDs = process.env.GOVC_ISO_DATASTORE
+      || process.env.CLOUD_IMAGE_DATASTORE
+      || 'SSD-DATASTORE-01';
+    await execPromise(
+      `govc datastore.rm -ds="${isoDs}" "cloud-init/${name}.iso"`,
+      { env }
+    ).catch(() => {});
   },
 
   /**
@@ -491,9 +512,9 @@ const govcStrategy = {
 
   /**
    * Content Library 내 이미지 (OVA/OVF) 목록 조회
-   * @param libraryPath - Library 경로 (예: "/" 또는 "/MyLibrary")
+   * @param libraryPath - Library 경로. 미지정 시 CONTENT_LIBRARY_PATH 환경변수 사용 (기본 "/")
    */
-  async listCloudImages(libraryPath = '/'): Promise<CloudImage[]> {
+  async listCloudImages(libraryPath = process.env.CONTENT_LIBRARY_PATH || '/'): Promise<CloudImage[]> {
     const env = this.getEnv();
 
     // govc about.library.item.ls 로 Library Item 조회
@@ -547,6 +568,10 @@ const govcStrategy = {
 const restStrategy = {
   async createVm(params: VmCreateParams): Promise<VmResult> {
     return { vm_id: 'rest-id', status: 'created' };
+  },
+
+  async destroyVm(_name: string): Promise<void> {
+    throw new Error('destroyVm not implemented for REST strategy');
   },
 
   async selectBestDatastore(): Promise<string> {
@@ -608,6 +633,10 @@ export const esxiClient = {
 
   async createVmFromTemplate(params: VmCreateParams) {
     return await this.strategy.createVm(params);
+  },
+
+  async destroyVm(name: string) {
+    return await this.strategy.destroyVm(name);
   },
 
   async powerOff(name: string) {

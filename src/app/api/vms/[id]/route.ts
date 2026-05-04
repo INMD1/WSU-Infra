@@ -58,18 +58,29 @@ export async function PATCH(
 /**
  * 2.5 VM 삭제
  * DELETE /api/vms/[id]
+ *
+ * ESXi VM 과 그 디스크, 연관 포트포워딩까지 함께 정리.
+ * ESXi 호출 실패 시 500 — DB row 는 유지하여 재시도 가능.
  */
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const success = await vmService.deleteVm(id);
-  if (!success) return NextResponse.json({ message: 'VM not found' }, { status: 404 });
+  try {
+    const success = await vmService.deleteVm(id);
+    if (!success) return NextResponse.json({ message: 'VM not found' }, { status: 404 });
 
-  return NextResponse.json({
-    vm_id: id,
-    status: 'deleting',
-    message: 'VM deletion started. SSH port will be released.',
-  });
+    return NextResponse.json({
+      vm_id: id,
+      status: 'deleted',
+      message: 'VM, disks, and related port-forwards removed.',
+    });
+  } catch (error: any) {
+    console.error('[VM API] DELETE error:', error);
+    return NextResponse.json(
+      { message: 'Failed to delete VM', error: error?.message ?? String(error) },
+      { status: 500 }
+    );
+  }
 }

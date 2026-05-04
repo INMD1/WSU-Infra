@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { db } from '../db';
 import { vms, portForwards } from '../db/schema';
 import { eq, inArray } from 'drizzle-orm';
-import { esxiClient } from '../lib/infrastructure';
+import { esxiClient, pfsenseClient } from '../lib/infrastructure';
 import { jobQueue, JobData } from '../lib/queue';
 
 function generateVmPassword(): string {
@@ -135,7 +135,28 @@ export const vmService = {
     };
   },
 
-  async deleteVm(id: string) {
+  async deleteVm(id: string): Promise<boolean> {
+    const rows = await db.select().from(vms).where(eq(vms.vm_id, id));
+    if (rows.length === 0) return false;
+    const vm = rows[0];
+
+    // 1) 연관 포트포워딩 정리 (pfSense + DB)
+    const pfs = await db.select().from(portForwards).where(eq(portForwards.vm_id, id));
+    for (const pf of pfs) {
+      if (pf.pfsense_tracker) {
+        await pfsenseClient.deletePortForward(pf.pfsense_tracker).catch(err =>
+          console.warn(`[vmService] pfSense rule ${pf.pfsense_tracker} 삭제 실패:`, err?.message ?? err)
+        );
+      }
+    }
+    await db.delete(portForwards).where(eq(portForwards.vm_id, id));
+
+    // 2) ESXi VM 파괴 (vmdk 함께 정리). 실패 시 throw 하여 DB row 는 유지(재시도 가능).
+    if (vm.name) {
+      await esxiClient.destroyVm(vm.name);
+    }
+
+    // 3) DB row 삭제
     await db.delete(vms).where(eq(vms.vm_id, id));
     return true;
   },

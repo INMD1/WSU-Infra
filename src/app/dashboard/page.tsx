@@ -106,7 +106,7 @@ export default function DashboardPage() {
     setRole(localStorage.getItem('role') || '');
     fetchData();
 
-    authFetch('/api/images?source=datastore')
+    authFetch('/api/images?source=library')
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         const list = d?.data || [];
@@ -393,7 +393,11 @@ export default function DashboardPage() {
           <form onSubmit={handleCreateVm}>
             <label style={labelStyle}>VM 이름</label>
             <input style={inputStyle} type="text" value={newVm.name}
-              onChange={e => setNewVm(p => ({ ...p, name: e.target.value }))} required />
+              onChange={e => setNewVm(p => ({ ...p, name: e.target.value }))}
+              placeholder={username ? `자동으로 user-${username}- 접두사가 붙습니다` : '영문/숫자/-/_ 만 허용'}
+              pattern="[a-zA-Z0-9_-]+"
+              title="영문, 숫자, 하이픈(-), 언더스코어(_)만 사용 가능"
+              required />
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
@@ -412,7 +416,7 @@ export default function DashboardPage() {
             <input style={inputStyle} type="number" min={10} value={newVm.disk_gb}
               onChange={e => setNewVm(p => ({ ...p, disk_gb: Number(e.target.value) }))} required />
 
-            <label style={labelStyle}>이미지 (OVA)</label>
+            <label style={labelStyle}>이미지 (Content Library)</label>
             {images.length > 0 ? (
               <select value={newVm.image_id}
                 onChange={e => setNewVm(p => ({ ...p, image_id: e.target.value }))}
@@ -424,9 +428,9 @@ export default function DashboardPage() {
                 ))}
               </select>
             ) : (
-              <input style={inputStyle} type="text" value={newVm.image_id}
-                onChange={e => setNewVm(p => ({ ...p, image_id: e.target.value }))}
-                placeholder="OVA 파일명 또는 템플릿 VM 이름" required />
+              <div style={{ ...errorBoxStyle, background: '#fef3c7', color: '#92400e' }}>
+                Content Library에 이미지가 없습니다. 관리자에게 문의하세요.
+              </div>
             )}
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
