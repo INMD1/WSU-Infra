@@ -587,23 +587,36 @@ const govcStrategy = {
       const { stdout: ipStdout } = await execPromise(`govc vm.ip -wait=5m "${params.name}"`, { env });
       let ipAddress = ipStdout.trim();
 
-      // cloud-init 의 네트워크 재설정 / DHCP renewal 로 IP 가 한 번 바뀔 수 있어
-      // 잠깐 settle 대기 후 VMware Tools 의 Guest.Net 에서 최신 IP 재조회
-      await new Promise(r => setTimeout(r, 15000));
-      try {
-        const { stdout: guestStdout } = await execPromise(`govc vm.info -e -json "${params.name}"`, { env });
-        const guestInfo = JSON.parse(guestStdout);
-        const guestVm = guestInfo?.VirtualMachines?.[0] ?? guestInfo?.virtualMachines?.[0];
-        const nets: any[] = guestVm?.Guest?.Net ?? guestVm?.guest?.net ?? [];
-        const ips: string[] = nets.flatMap((n: any) => (n.IpAddress ?? n.ipAddress ?? []) as string[]);
-        const v4 = ips.find(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('169.254.'));
-        if (v4 && v4 !== ipAddress) {
-          console.log(`[govc] IP refreshed: ${ipAddress} → ${v4}`);
-          ipAddress = v4;
+      // cloud-init 의 네트워크 재설정 / DHCP renewal 로 IP 가 30~60초 사이에 한두 번
+      // 바뀔 수 있어, 5 초 간격 폴링하며 연속 2 회 같은 IP 가 보일 때까지(=안정화) 대기.
+      // 최대 60초. 매 폴링마다 ipAddress 갱신 — 마지막 안정 IP 가 결과.
+      const queryCurrentIp = async (): Promise<string | null> => {
+        try {
+          const { stdout } = await execPromise(`govc vm.info -e -json "${params.name}"`, { env });
+          const info = JSON.parse(stdout);
+          const vm = info?.VirtualMachines?.[0] ?? info?.virtualMachines?.[0];
+          const nets: any[] = vm?.Guest?.Net ?? vm?.guest?.net ?? [];
+          const ips: string[] = nets.flatMap((n: any) => (n.IpAddress ?? n.ipAddress ?? []) as string[]);
+          return ips.find(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('169.254.')) ?? null;
+        } catch {
+          return null;
         }
-      } catch (err) {
-        console.warn(`[govc] IP refresh skipped:`, (err as any)?.message ?? err);
+      };
+
+      let stableHits = 0;
+      for (let i = 0; i < 12 && stableHits < 2; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const cur = await queryCurrentIp();
+        if (!cur) continue;
+        if (cur === ipAddress) {
+          stableHits++;
+        } else {
+          console.log(`[govc] IP refreshed: ${ipAddress} → ${cur}`);
+          ipAddress = cur;
+          stableHits = 0;
+        }
       }
+      console.log(`[govc] IP settled: ${ipAddress} (stableHits=${stableHits})`);
 
       // 8. Info Retrieval (IP 받은 후 최종 확인 — moref/uuid 가 이른 단계에서 못 얻혔으면 여기서 보강)
       let vm_id = earlyVmId;
@@ -1185,12 +1198,26 @@ export const pfsenseClient = {
 
   async deletePortForward(id: string): Promise<void> {
     this.assertConfigured();
-    const res = await this.fetchWithTls(
-      `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}&apply=true`,
-      { method: 'DELETE' }
-    );
-    const json = await res.json() as any;
-    if (json.code !== 200) throw new Error('pfSense NAT rule deletion failed');
+    const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}&apply=true`;
+    console.log(`[pfSense] DELETE ${url}`);
+    const res = await this.fetchWithTls(url, { method: 'DELETE' });
+    const rawText = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(rawText); } catch { /* non-JSON */ }
+    console.log(`[pfSense] delete response: status=${res.status}, body=${rawText.slice(0, 600)}`);
+
+    // 404/이미 없음은 idempotent 하게 통과 (VM 재삭제·중복 호출 방지)
+    if (res.status === 404 || (json && (json.code === 404 || json.response_id === 'NOT_FOUND'))) {
+      console.warn(`[pfSense] rule ${id} 이미 없음 — 삭제 skip`);
+      return;
+    }
+
+    if (!json || json.code !== 200) {
+      const detail = json
+        ? `code=${json.code}, message=${json.message ?? '(none)'}, response_id=${json.response_id ?? '(none)'}`
+        : 'non-JSON response';
+      throw new Error(`pfSense NAT rule deletion failed: HTTP ${res.status}, ${detail}`);
+    }
   },
 };
 
