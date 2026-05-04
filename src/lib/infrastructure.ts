@@ -121,22 +121,23 @@ const govcStrategy = {
    */
   async resolveDatastoreForDeploy(name: string): Promise<string> {
     const env = this.getEnv();
-    const dcRaw = (env.GOVC_DATACENTER || '/').replace(/^\/+|\/+$/g, '');
-    const dcName = dcRaw.split('/')[0] || '';
 
-    // 멤버 inventory 경로 조회. 단일 DS면 govc ls 가 빈 결과 또는 실패.
-    let memberPaths: string[] = [];
+    // 모든 데이터스토어 inventory path 조회 (GOVC_DATACENTER 설정 무관하게 작동)
+    // 예: /<dc>/datastore/<pod>/<member1>, /<dc>/datastore/<member3>
+    let allDsPaths: string[] = [];
     try {
-      const podPath = dcName
-        ? `/${dcName}/datastore/${name}`
-        : `datastore/${name}`;
-      const { stdout } = await execPromise(`govc ls "${podPath}"`, { env });
-      memberPaths = stdout.trim().split('\n').filter(Boolean);
+      const { stdout } = await execPromise(`govc find / -type s`, { env });
+      allDsPaths = stdout.trim().split('\n').filter(Boolean);
     } catch {
       return name;
     }
 
-    if (memberPaths.length === 0) return name;
+    // 경로에 "/<name>/" 가 포함된 것이 해당 StoragePod 의 멤버
+    const memberPaths = allDsPaths.filter(p => p.includes(`/${name}/`));
+    if (memberPaths.length === 0) {
+      // StoragePod 이 아니거나 이름이 일반 데이터스토어 → 그대로 사용
+      return name;
+    }
 
     let best: { name: string; free: number } | null = null;
     for (const path of memberPaths) {
@@ -158,6 +159,7 @@ const govcStrategy = {
       console.log(`[govc] Resolved StoragePod "${name}" → member "${best.name}" (${(best.free / (1024 ** 3)).toFixed(2)}GB free)`);
       return best.name;
     }
+    console.warn(`[govc] StoragePod "${name}" 멤버 정보를 가져오지 못했습니다 — 클러스터 이름 그대로 사용`);
     return name;
   },
 
