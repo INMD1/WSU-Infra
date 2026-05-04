@@ -16,7 +16,8 @@ param(
   [Parameter(Mandatory=$true)][string]$VMName,
   [Parameter(Mandatory=$true)][string]$DatastoreName,
   [string]$ResourcePoolName = "",
-  [string]$FolderName = ""
+  [string]$FolderName = "",
+  [string]$VMHostName = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,8 +51,22 @@ try {
   if ($ResourcePoolName) {
     $params.ResourcePool = Get-ResourcePool -Name $ResourcePoolName -ErrorAction Stop
   }
+  if ($VMHostName) {
+    $params.VMHost = Get-VMHost -Name $VMHostName -ErrorAction Stop
+  }
   if ($FolderName) {
     $params.Location = Get-Folder -Name $FolderName -Type VM -ErrorAction Stop
+  }
+
+  # New-VM 은 ResourcePool / VMHost 중 하나가 필수.
+  # 둘 다 안 들어왔으면 첫 번째 클러스터의 루트 풀(Resources) 자동 선택.
+  if (-not $params.ContainsKey('ResourcePool') -and -not $params.ContainsKey('VMHost')) {
+    $cluster = Get-Cluster -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cluster) {
+      $params.ResourcePool = $cluster | Get-ResourcePool -Name Resources -ErrorAction Stop
+    } else {
+      $params.VMHost = Get-VMHost -ErrorAction Stop | Select-Object -First 1
+    }
   }
 
   $vm = New-VM @params -ErrorAction Stop

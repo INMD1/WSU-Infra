@@ -473,12 +473,15 @@ const govcStrategy = {
       if (params.template.startsWith('/')) {
         // PowerCLI 는 New-VM 에 DatastoreCluster 객체를 직접 받아 SDRS 로 자동 배치하므로
         // govc library.deploy 의 StoragePod 미지원 한계를 회피.
+        // selectBestHost 가 inventory path 를 반환 (예: /<dc>/host/<cluster>/host01) — 마지막 세그먼트만 사용
+        const vmHostName = targetHost ? targetHost.split('/').pop() || '' : '';
         await this.deployLibraryItemViaPowerCLI({
           libraryItemPath: params.template,
           vmName: params.name,
           datastoreOrCluster: datastore,
           resourcePool: env.GOVC_RESOURCE_POOL,
           folder: env.GOVC_FOLDER,
+          vmHost: vmHostName,
         });
       } else {
         const templateName = /\.(ova|ovf)$/i.test(params.template)
@@ -569,6 +572,7 @@ const govcStrategy = {
     datastoreOrCluster: string;
     resourcePool?: string;
     folder?: string;
+    vmHost?: string;
   }): Promise<void> {
     const env = this.getEnv();
     const trimmed = opts.libraryItemPath.replace(/^\/+/, '');
@@ -599,6 +603,7 @@ const govcStrategy = {
     ];
     if (opts.resourcePool) args.push('-ResourcePoolName', opts.resourcePool);
     if (opts.folder) args.push('-FolderName', opts.folder);
+    if (opts.vmHost) args.push('-VMHostName', opts.vmHost);
 
     console.log(`[pwsh] Deploying library item "${opts.libraryItemPath}" → "${opts.vmName}" via PowerCLI, ds=${opts.datastoreOrCluster}`);
     try {
