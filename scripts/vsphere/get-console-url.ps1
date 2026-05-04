@@ -34,9 +34,10 @@ try {
   $ticket = $sm.AcquireCloneTicket()
 
   # VM 이 떨어진 호스트 정보 (콘솔 endpoint + thumbprint 필요)
-  $hostView = Get-View -Id $vmView.Runtime.Host -Property Name, Config.SslThumbprint
+  # SSL thumbprint 는 Summary.Config.SslThumbprint 경로에 있음 (Config.SslThumbprint 아님)
+  $hostView = Get-View -Id $vmView.Runtime.Host -Property Name, Summary.Config.SslThumbprint
   $hostName = $hostView.Name
-  $thumbprint = $hostView.Config.SslThumbprint
+  $thumbprint = $hostView.Summary.Config.SslThumbprint
   $serverGuid = $si.Content.About.InstanceUuid
 
   # 표준 vCenter 콘솔 URL — 모든 파라미터가 있어야 SSO 우회됨
