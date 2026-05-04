@@ -541,15 +541,23 @@ const govcStrategy = {
       console.log(`[govc] Powering on VM...`);
       await execPromise(`govc vm.power -on "${params.name}"`, { env });
 
+      // govc 의 -json 출력이 PascalCase / camelCase 두 형식이 모두 있어 양쪽 처리.
+      const extractVmInfo = (raw: any): { vm_id: string; moref: string } => {
+        const vm = raw?.VirtualMachines?.[0] ?? raw?.virtualMachines?.[0];
+        return {
+          vm_id: vm?.Config?.Uuid ?? vm?.config?.uuid ?? '',
+          moref: vm?.Self?.Value ?? vm?.self?.value ?? '',
+        };
+      };
+
       // Power-on 직후 vm.info 로 vm_id/moref 즉시 확보 — 호출자가 IP 대기 전에 DB 등록 가능
       let earlyVmId = '';
       let earlyMoref = '';
       try {
         const { stdout } = await execPromise(`govc vm.info -json "${params.name}"`, { env });
-        const info = JSON.parse(stdout);
-        const vm = info?.VirtualMachines?.[0];
-        earlyVmId = vm?.Config?.Uuid ?? '';
-        earlyMoref = vm?.Self?.Value ?? '';
+        const parsed = extractVmInfo(JSON.parse(stdout));
+        earlyVmId = parsed.vm_id;
+        earlyMoref = parsed.moref;
         if (params.onPowerOn && earlyVmId) {
           await Promise.resolve(params.onPowerOn({ vm_id: earlyVmId, moref: earlyMoref }))
             .catch(err => console.warn(`[govc] onPowerOn callback error:`, err?.message ?? err));
@@ -568,9 +576,15 @@ const govcStrategy = {
       let moref = earlyMoref;
       if (!vm_id || !moref) {
         const { stdout: infoStdout } = await execPromise(`govc vm.info -json "${params.name}"`, { env });
-        const info = JSON.parse(infoStdout);
-        vm_id = info.VirtualMachines[0].Config.Uuid;
-        moref = info.VirtualMachines[0].Self.Value;
+        const parsed = extractVmInfo(JSON.parse(infoStdout));
+        vm_id = parsed.vm_id;
+        moref = parsed.moref;
+        if (!vm_id || !moref) {
+          throw new Error(
+            `govc vm.info 에서 vm_id/moref 를 추출하지 못했습니다. ` +
+            `출력 미리보기: ${infoStdout.slice(0, 500)}`
+          );
+        }
       }
 
       // Cleanup local ISO
