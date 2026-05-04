@@ -72,36 +72,49 @@ export default function ConsolePage() {
 
   // 2) wmks 로드 + ticket 둘 다 준비되면 connect
   useEffect(() => {
-    if (!info || !wmksReady || !window.WMKS) return;
+    if (!info || !wmksReady) return;
     setStatus('ESXi WebMKS 연결 중...');
     try {
-      const inst = window.WMKS.createWMKS('mks-container', {
-        useUnicodeKeyboardInput: true,
-        rescale: true,
-      });
+      const W: any = (window as any).WMKS;
+      const $: any = (window as any).jQuery ?? (window as any).$;
+      // 디버그: 실제로 어떤 API 가 노출되는지 콘솔에서 확인
+      console.log('[wmks] window.WMKS keys:', W ? Object.keys(W) : '(undefined)');
+      if ($) console.log('[wmks] jQuery available:', typeof $);
+
+      // vmware-wmks 패키지는 버전마다 factory 이름이 다름. 여러 후보 시도.
+      let inst: any = null;
+      const opts = { useUnicodeKeyboardInput: true, rescale: true };
+      if (W?.createWMKS) {
+        inst = W.createWMKS('mks-container', opts);
+      } else if (W?.WMKS) {
+        inst = new W.WMKS('mks-container', opts);
+      } else if (typeof W === 'function') {
+        inst = new W('mks-container', opts);
+      } else if ($ && $.fn?.wmks) {
+        // jQuery 플러그인 형태
+        inst = $('#mks-container').wmks(opts).data('wmks');
+      } else {
+        throw new Error(
+          `WMKS factory 를 찾지 못함. window.WMKS 구조: ${W ? JSON.stringify(Object.keys(W)) : 'undefined'}`
+        );
+      }
 
       const wssUrl = `wss://${info.host}:${info.port}/ticket/${info.ticket}`;
       console.log('[wmks] connecting:', wssUrl);
+      inst.connect(wssUrl);
 
-      // 일부 wmks.js 구현은 connect(url) 두 번째 인자로 thumbprint 받음
-      try {
-        inst.connect(wssUrl);
-      } catch (e) {
-        console.error('[wmks] connect error', e);
-      }
-
-      const C = window.WMKS.CONST?.ConnectionState;
+      const C = W?.CONST?.ConnectionState;
       if (C && inst.register) {
         inst.register('CONNECTIONSTATECHANGE', (_e: any, data: any) => {
           if (data?.state === C.CONNECTED) setStatus('연결됨');
           else if (data?.state === C.DISCONNECTED) setStatus('연결 끊김 — ticket 만료 시 페이지 새로고침');
-          else if (data?.state === C.ERROR) setStatus('오류 — 콘솔에서 자세한 사항 확인');
+          else if (data?.state === C.ERROR) setStatus('오류 — 브라우저 콘솔 확인');
         });
       }
 
       wmksRef.current = inst;
     } catch (err: any) {
-      setError(`wmks 초기화 실패: ${err?.message ?? err}`);
+      setError(`wmks 초기화 실패: ${err?.message ?? err}\n\n브라우저 개발자도구 Console 에서 [wmks] 로그 확인 후 알려주세요.`);
     }
 
     return () => {
@@ -144,7 +157,7 @@ export default function ConsolePage() {
           <h3>오류</h3>
           <pre style={{ whiteSpace: 'pre-wrap' }}>{error}</pre>
           <p style={{ color: '#888', fontSize: '0.85rem', marginTop: '1rem' }}>
-            wmks.js 가 없으면 <code>public/lib/wmks/wmks.min.js</code> 에 wmks 라이브러리를 배치하세요 (vCenter 의 <code>/usr/lib/vmware-vsphere-ui/server/webapps/</code> 안에서 추출 가능, 또는 VMware HTML Console SDK).
+            wmks.js 는 jsDelivr CDN(<code>vmware-wmks@1.0.0</code>)에서 로드됩니다. 콘솔 화면 띄우려면 학생 PC 가 jsDelivr (<code>cdn.jsdelivr.net</code>) 및 ESXi 호스트(<code>{info?.host}:{info?.port}</code>)에 직접 도달 가능해야 합니다.
           </p>
         </div>
       ) : (
