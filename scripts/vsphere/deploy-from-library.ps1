@@ -45,16 +45,18 @@ try {
   }
 
   # 네트워크가 주어졌으면 그 PG 가 실제로 존재하는 호스트로만 deploy 후보 제한.
-  # (예: Internal-VNIC 는 vSwitch2 에만 있는데 클러스터의 모든 호스트가 vSwitch2 를
-  #  갖지는 않을 때 SDRS 가 잘못된 호스트로 떨어뜨려 NIC 할당이 실패하는 문제 해결)
-  # PowerCLI -Name 매칭이 wildcard 로 동작해 정확매칭에 실패할 수 있어 Where-Object 로 직접 필터.
-  $networkHosts = $null
-  $standardPgs = @()
+  # 호스트별로 명시적 조회 — Get-VirtualPortGroup 결과 객체에 VMHost 속성이
+  # 노출되지 않는 PowerCLI 버전 차이를 회피.
+  $networkHosts = @()
   if ($NetworkName) {
-    $standardPgs = @(Get-VirtualPortGroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName })
-    if ($standardPgs.Count -gt 0) {
-      $networkHosts = $standardPgs | Select-Object -ExpandProperty VMHost | Sort-Object Name -Unique
-      Write-Output ("Standard PG '{0}' 보유 호스트: {1}" -f $NetworkName, (($networkHosts | Select-Object -ExpandProperty Name) -join ', '))
+    foreach ($h in (Get-VMHost -ErrorAction SilentlyContinue)) {
+      $pgs = Get-VirtualPortGroup -VMHost $h -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName }
+      if ($pgs) {
+        $networkHosts += $h
+      }
+    }
+    if ($networkHosts.Count -gt 0) {
+      Write-Output ("Standard PG '{0}' 보유 호스트: {1}" -f $NetworkName, (($networkHosts | ForEach-Object { $_.Name }) -join ', '))
     } else {
       $vds = Get-VDPortgroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName }
       if (-not $vds) {
@@ -119,8 +121,8 @@ try {
     $portgroup = $vm.VMHost | Get-VirtualPortGroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName } | Select-Object -First 1
 
     # 2) 다른 호스트의 표준 PG → VM 을 그 호스트로 vMotion 이동 후 PG 재조회
-    if (-not $portgroup -and $standardPgs.Count -gt 0) {
-      $targetHost = $standardPgs | Select-Object -ExpandProperty VMHost | Sort-Object @{Expression={ $_.MemoryTotalGB - $_.MemoryUsageGB }; Descending=$true} | Select-Object -First 1
+    if (-not $portgroup -and $networkHosts.Count -gt 0) {
+      $targetHost = $networkHosts | Sort-Object @{Expression={ $_.MemoryTotalGB - $_.MemoryUsageGB }; Descending=$true} | Select-Object -First 1
       if ($targetHost.Name -ne $vm.VMHost.Name) {
         Write-Output ("Moving VM '{0}' from '{1}' to '{2}' (network 보유 호스트)" -f $vm.Name, $vm.VMHost.Name, $targetHost.Name)
         Move-VM -VM $vm -Destination $targetHost -Confirm:$false -ErrorAction Stop | Out-Null
