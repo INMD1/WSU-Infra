@@ -187,6 +187,21 @@ export default function DashboardPage() {
     }
   };
 
+  // ── 웹콘솔 열기 ───────────────────────────────
+  const handleOpenConsole = async (vmId: string) => {
+    try {
+      const res = await authFetch(`/api/vms/${vmId}/console`);
+      const data = await res.json();
+      if (res.ok && data.url) {
+        window.open(data.url, '_blank', 'noopener,noreferrer');
+      } else {
+        alert(data.message || '콘솔 URL을 가져올 수 없습니다');
+      }
+    } catch {
+      alert('네트워크 오류');
+    }
+  };
+
   // ── 포트포워딩 삭제 ───────────────────────────
   const handleDeletePf = async (pfId: string) => {
     if (!confirm('이 포트포워딩 규칙을 삭제하시겠습니까?')) return;
@@ -254,12 +269,13 @@ export default function DashboardPage() {
               <th>IP</th>
               <th>SSH 비밀번호</th>
               <th>포트포워딩</th>
+              <th>콘솔</th>
               <th>생성일</th>
             </tr>
           </thead>
           <tbody>
             {vms.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>생성된 VM이 없습니다.</td></tr>
             ) : vms.map(vm => (
               <tr key={vm.vm_id}>
                 <td style={{ fontWeight: 500 }}>{vm.name}</td>
@@ -282,6 +298,16 @@ export default function DashboardPage() {
                     title={!vm.internal_ip ? 'VM IP가 할당된 후 사용 가능합니다' : ''}
                   >
                     {vm.port_forwards?.length > 0 ? `${vm.port_forwards.length}개 보기` : '추가'}
+                  </button>
+                </td>
+                <td>
+                  <button
+                    onClick={() => handleOpenConsole(vm.vm_id)}
+                    style={pfBtnStyle}
+                    disabled={vm.status !== 'running'}
+                    title={vm.status !== 'running' ? 'VM이 실행 중일 때만 콘솔에 연결할 수 있습니다' : '새 탭에서 vSphere HTML5 콘솔 열기'}
+                  >
+                    콘솔 열기
                   </button>
                 </td>
                 <td style={{ fontSize: '0.85rem' }}>{new Date(vm.created_at).toLocaleDateString()}</td>

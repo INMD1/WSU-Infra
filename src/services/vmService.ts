@@ -4,6 +4,9 @@ import { vms, portForwards } from '../db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { esxiClient, pfsenseClient } from '../lib/infrastructure';
 import { jobQueue, JobData } from '../lib/queue';
+import { portForwardService } from './portForwardService';
+
+const DEFAULT_TENANT_ID = 'tenant-uuid-1234';
 
 function generateVmPassword(): string {
   // 12자 URL-safe base64 (쉘 특수문자 없음)
@@ -46,11 +49,34 @@ async function processVmCreateJob(jobData: any): Promise<any> {
       owner_id: data.owner_id || null,
     });
 
+    // 자동 SSH 포트포워딩 (실패해도 VM 생성 자체는 성공)
+    let autoSshPort: number | null = null;
+    let autoSshIp: string | null = null;
+    if (provisioned.ip_address) {
+      try {
+        const pf = await portForwardService.create({
+          tenantId: DEFAULT_TENANT_ID,
+          ownerId: data.owner_id || undefined,
+          vmId: provisioned.vm_id,
+          internalIp: provisioned.ip_address,
+          internalPort: 22,
+          protocol: 'tcp',
+          description: `auto-ssh:${data.name}`,
+        });
+        autoSshPort = pf.external_port;
+        autoSshIp = pf.external_ip;
+        console.log(`[VM Service] Auto SSH PF: ${pf.external_ip}:${pf.external_port} → ${provisioned.ip_address}:22`);
+      } catch (pfError: any) {
+        console.warn(`[VM Service] Auto SSH PF 실패 (${data.name}): ${pfError?.message ?? pfError}`);
+      }
+    }
+
     return {
       success: true,
       vm_id: provisioned.vm_id,
       name: data.name,
       message: 'VM created successfully',
+      auto_ssh: autoSshPort ? { external_ip: autoSshIp, external_port: autoSshPort } : null,
     };
   } catch (error: any) {
     console.error(`[VM Service] VM creation failed:`, error.message);

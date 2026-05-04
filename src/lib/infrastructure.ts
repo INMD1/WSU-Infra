@@ -475,6 +475,21 @@ const govcStrategy = {
   },
 
   /**
+   * vSphere HTML5 웹콘솔 URL 발급. 단명 sessionTicket 이 포함되어
+   * 학생이 vCenter 계정 없이도 새 탭에서 콘솔 접근 가능.
+   * 요구: vCenter Standard 이상 라이선스. govc 0.30+.
+   */
+  async getConsoleUrl(name: string): Promise<string> {
+    const env = this.getEnv();
+    const { stdout } = await execPromise(`govc vm.console -h5 "${name}"`, { env });
+    const url = stdout.trim();
+    if (!url || !url.startsWith('http')) {
+      throw new Error(`Unexpected console URL output: ${stdout}`);
+    }
+    return url;
+  },
+
+  /**
    * VM 파괴 (디스크 포함). vm.destroy 는 Destroy_Task 를 수행하여
    * VM 폴더의 vmdk/nvram/vmx 파일을 함께 제거함.
    * cloud-init ISO 가 별도 데이터스토어에 업로드된 경우 추가 정리.
@@ -574,6 +589,10 @@ const restStrategy = {
     throw new Error('destroyVm not implemented for REST strategy');
   },
 
+  async getConsoleUrl(_name: string): Promise<string> {
+    throw new Error('getConsoleUrl not implemented for REST strategy');
+  },
+
   async selectBestDatastore(): Promise<string> {
     return 'datastore-rest';
   },
@@ -637,6 +656,10 @@ export const esxiClient = {
 
   async destroyVm(name: string) {
     return await this.strategy.destroyVm(name);
+  },
+
+  async getConsoleUrl(name: string): Promise<string> {
+    return await this.strategy.getConsoleUrl(name);
   },
 
   async powerOff(name: string) {

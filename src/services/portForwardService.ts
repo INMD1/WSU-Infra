@@ -4,8 +4,8 @@ import { portForwards, quotas } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { pfsenseClient } from '../lib/infrastructure';
 
-const PORT_RANGE_START = Number(process.env.PFSENSE_PORT_RANGE_START || 10000);
-const PORT_RANGE_END = Number(process.env.PFSENSE_PORT_RANGE_END || 20000);
+const PORT_RANGE_START = Number(process.env.PFSENSE_PORT_RANGE_START || 1000);
+const PORT_RANGE_END = Number(process.env.PFSENSE_PORT_RANGE_END || 9999);
 
 // Private RFC-1918 ranges only — prevents forwarding to loopback, pfSense mgmt, or public IPs
 const PRIVATE_IP_RE = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})$/;
