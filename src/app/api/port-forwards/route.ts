@@ -2,22 +2,25 @@ import { NextResponse } from 'next/server';
 import { portForwardService, ValidationError } from '@/services/portForwardService';
 import { requireAuth } from '@/lib/apiAuth';
 
-const TENANT_ID = 'tenant-uuid-1234';
-
 /**
  * GET /api/port-forwards
  * 포트 포워딩 목록 조회 — internal IP/port, external IP/port 포함
+ * ownerId 쿼리 파라미터로 필터링 가능 (없으면 전체 조회 - 관리자)
  */
 export async function GET(request: Request) {
   const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
+  const { searchParams } = new URL(request.url);
+  const ownerId = searchParams.get('ownerId') || undefined;
+
   try {
-    const rules = await portForwardService.list(TENANT_ID);
+    const rules = await portForwardService.list(ownerId);
     return NextResponse.json({
       data: rules.map(r => ({
         id: r.id,
         vm_id: r.vm_id,
+        owner_id: r.owner_id,
         protocol: r.protocol,
         internal_ip: r.internal_ip,
         internal_port: r.internal_port,
@@ -36,7 +39,7 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/port-forwards
- * Body: { internal_ip, internal_port, external_port?, protocol?, vm_id?, description? }
+ * Body: { internal_ip, internal_port, external_port?, protocol?, vm_id?, owner_id?, description? }
  */
 export async function POST(request: Request) {
   const auth = requireAuth(request);
@@ -44,7 +47,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { internal_ip, internal_port, external_port, protocol, vm_id, description } = body;
+    const { internal_ip, internal_port, external_port, protocol, vm_id, owner_id, description } = body;
 
     if (!internal_ip || internal_port === undefined) {
       return NextResponse.json(
@@ -54,7 +57,7 @@ export async function POST(request: Request) {
     }
 
     const rule = await portForwardService.create({
-      tenantId: TENANT_ID,
+      ownerId: typeof owner_id === 'string' ? owner_id : undefined,
       vmId: typeof vm_id === 'string' ? vm_id : undefined,
       internalIp: String(internal_ip),
       internalPort: Number(internal_port),

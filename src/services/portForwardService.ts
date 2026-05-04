@@ -67,14 +67,16 @@ async function allocateExternalPort(requestedPort?: number): Promise<number> {
   throw new Error('No available external ports in configured range');
 }
 
-async function checkQuota(tenantId: string): Promise<void> {
-  const quotaResult = await db.select().from(quotas).where(eq(quotas.tenant_id, tenantId));
+async function checkQuota(ownerId?: string): Promise<void> {
+  if (!ownerId) return; // ownerId 가 없으면 쿼터 체크 생략 (관리자용)
+
+  const quotaResult = await db.select().from(quotas).where(eq(quotas.owner_id, ownerId));
   const limit = quotaResult[0]?.max_public_ports ?? 10;
 
   const countResult = await db
     .select({ count: sql<number>`count(*)` })
     .from(portForwards)
-    .where(eq(portForwards.tenant_id, tenantId));
+    .where(eq(portForwards.owner_id, ownerId));
   const current = Number(countResult[0]?.count || 0);
 
   if (current >= limit) {
@@ -83,15 +85,15 @@ async function checkQuota(tenantId: string): Promise<void> {
 }
 
 export const portForwardService = {
-  async list(tenantId: string) {
-    return db
-      .select()
-      .from(portForwards)
-      .where(eq(portForwards.tenant_id, tenantId));
+  async list(ownerId?: string) {
+    if (ownerId) {
+      return db.select().from(portForwards).where(eq(portForwards.owner_id, ownerId));
+    }
+    // ownerId 없이 호출 시 전체 반환 (관리자용)
+    return db.select().from(portForwards);
   },
 
   async create(params: {
-    tenantId: string;
     ownerId?: string;
     vmId?: string;
     internalIp: string;
@@ -101,7 +103,7 @@ export const portForwardService = {
     description?: string;
   }) {
     validateInput(params);
-    await checkQuota(params.tenantId);
+    await checkQuota(params.ownerId);
 
     const protocol = params.protocol || 'tcp';
 
@@ -136,7 +138,6 @@ export const portForwardService = {
           id,
           vm_id: params.vmId || null,
           owner_id: params.ownerId || null,
-          tenant_id: params.tenantId,
           protocol,
           internal_ip: params.internalIp,
           internal_port: params.internalPort,
@@ -177,11 +178,8 @@ export const portForwardService = {
     throw lastError ?? new Error('PortForward create: exhausted retries');
   },
 
-  async delete(id: string, tenantId: string) {
-    const rows = await db
-      .select()
-      .from(portForwards)
-      .where(and(eq(portForwards.id, id), eq(portForwards.tenant_id, tenantId)));
+  async delete(id: string) {
+    const rows = await db.select().from(portForwards).where(eq(portForwards.id, id));
 
     if (rows.length === 0) return false;
 
@@ -194,11 +192,15 @@ export const portForwardService = {
     return true;
   },
 
-  async countByTenant(tenantId: string): Promise<number> {
+  async countByOwner(ownerId?: string): Promise<number> {
+    if (!ownerId) {
+      const result = await db.select({ count: sql<number>`count(*)` }).from(portForwards);
+      return Number(result[0]?.count || 0);
+    }
     const result = await db
       .select({ count: sql<number>`count(*)` })
       .from(portForwards)
-      .where(eq(portForwards.tenant_id, tenantId));
+      .where(eq(portForwards.owner_id, ownerId));
     return Number(result[0]?.count || 0);
   },
 };

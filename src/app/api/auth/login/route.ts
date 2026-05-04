@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { signToken } from '@/lib/auth';
 import { db } from '@/db';
-import { users } from '@/db/schema';
+import { users, quotas } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
 /**
@@ -48,8 +48,15 @@ export async function POST(request: Request) {
     }
 
     const user = result[0];
+
+    // 유저 쿼터가 없으면 자동으로 생성 (DB default 값 사용)
+    const existingQuota = await db.select().from(quotas).where(eq(quotas.owner_id, user.id));
+    if (existingQuota.length === 0) {
+      await db.insert(quotas).values({ owner_id: user.id });
+    }
+
     const token = signToken({ userId: user.id, username: sid, role: 'user' }, '8h');
-    return NextResponse.json({ access_token: token, role: 'user', username: sid });
+    return NextResponse.json({ access_token: token, role: 'user', username: sid, owner_id: user.id });
 
   } catch (error) {
     console.error('[Auth] Login error:', error);

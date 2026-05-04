@@ -82,8 +82,10 @@ export default function DashboardPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      const ownerId = localStorage.getItem('owner_id');
+      const quotaUrl = ownerId ? `/api/quotas?userId=${encodeURIComponent(ownerId)}` : '/api/quotas';
       const [quotaRes, vmsRes] = await Promise.all([
-        authFetch('/api/quotas'),
+        authFetch(quotaUrl),
         authFetch('/api/vms'),
       ]);
       if (quotaRes.status === 401) { router.push('/login'); return; }
@@ -339,8 +341,9 @@ export default function DashboardPage() {
           <h2 style={{ marginBottom: '1rem' }}>내 쿼터 사용량</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
             <QuotaItem label="VM 개수" used={quotas.usage?.vm_count ?? 0} total={quotas.quota?.max_vm_count ?? 5} unit="개" />
-            <QuotaItem label="vCPU" used={quotas.usage?.vcpu_total ?? 0} total={quotas.quota?.max_vcpu_total ?? 20} unit="Core" />
-            <QuotaItem label="RAM" used={quotas.usage?.ram_gb_total ?? 0} total={quotas.quota?.max_ram_gb_total ?? 64} unit="GB" />
+            <QuotaItem label="vCPU" used={quotas.usage?.vcpu_total ?? 0} total={quotas.quota?.max_vcpu_total ?? 3} unit="Core" />
+            <QuotaItem label="RAM" used={quotas.usage?.ram_gb_total ?? 0} total={quotas.quota?.max_ram_gb_total ?? 4} unit="GB" />
+            <QuotaItem label="디스크" used={quotas.usage?.disk_gb_total ?? 0} total={quotas.quota?.max_disk_gb_total ?? 100} unit="GB" />
             <QuotaItem label="포트" used={quotas.usage?.ports_used ?? 0} total={quotas.quota?.max_public_ports ?? 10} unit="개" />
           </div>
         </section>

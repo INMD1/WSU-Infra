@@ -8,6 +8,7 @@ vSphere/ESXi 기반 VM 셀프서비스 포털. 사용자가 VM을 요청하면 J
 - **DB**: MySQL + Drizzle ORM (`src/db/schema.ts`)
 - **VM 제어**: govc CLI (`ESXI_MODE=govc`, 기본값) 또는 REST (`ESXI_MODE=rest`)
 - **인증**: JWT (access + refresh token)
+- **쿼터**: 유저별 독립 할당량 (vCPU, RAM, 디스크, 포트포워딩)
 
 ## 주요 명령어
 
@@ -142,3 +143,7 @@ pfSense-API **v2** 기준:
 - govc CLI가 서버에 설치되어 있어야 함
 - Cloud-init ISO 방식은 `genisoimage` 패키지 필요 (`injectCloudInitViaExtraConfig`로 대체 가능)
 - jobQueue는 프로세스 내 메모리 저장 → 서버 재시작 시 pending 상태 jobs 소실
+
+## 작업이 마무리 된후
+만약 사용자가 종료 라고 입력은 한경우 오늘 이 세션에서 작업한 내용을
+초중급 개발자가 이해하기 쉽게 정리를 해서 Update_Markdown 폴더에 새로운 파일로 MM-DD_HH:MM.md으로 저장해야함.

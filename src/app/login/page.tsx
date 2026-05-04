@@ -32,6 +32,7 @@ export default function LoginPage() {
         localStorage.setItem('access_token', data.access_token);
         localStorage.setItem('username', data.username);
         localStorage.setItem('role', data.role);
+        if (data.owner_id) localStorage.setItem('owner_id', data.owner_id);
         router.push(data.role === 'admin' ? '/admin' : '/dashboard');
       } else {
         setError(data.message || '로그인에 실패했습니다.');

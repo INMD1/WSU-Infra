@@ -86,7 +86,6 @@ async function processVmCreateJob(jobData: any): Promise<any> {
     if (provisioned.ip_address) {
       try {
         const pf = await portForwardService.create({
-          tenantId: DEFAULT_TENANT_ID,
           ownerId: data.owner_id || undefined,
           vmId: provisioned.vm_id,
           internalIp: provisioned.ip_address,

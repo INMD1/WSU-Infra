@@ -32,7 +32,6 @@ export const portForwards = mysqlTable('port_forwards', {
   id: varchar('id', { length: 36 }).primaryKey(),
   vm_id: varchar('vm_id', { length: 36 }).references(() => vms.vm_id),
   owner_id: varchar('owner_id', { length: 36 }).references(() => users.id),
-  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   protocol: varchar('protocol', { length: 10 }).notNull().default('tcp'),
   internal_ip: varchar('internal_ip', { length: 50 }).notNull(),
   internal_port: int('internal_port').notNull(),
@@ -44,11 +43,11 @@ export const portForwards = mysqlTable('port_forwards', {
 });
 
 export const quotas = mysqlTable('quotas', {
-  tenant_id: varchar('tenant_id', { length: 36 }).primaryKey(),
+  owner_id: varchar('owner_id', { length: 36 }).primaryKey(),
   max_vm_count: int('max_vm_count').default(5).notNull(),
-  max_vcpu_total: int('max_vcpu_total').default(20).notNull(),
-  max_ram_gb_total: int('max_ram_gb_total').default(64).notNull(),
-  max_disk_gb_total: int('max_disk_gb_total').default(1000).notNull(),
+  max_vcpu_total: int('max_vcpu_total').default(3).notNull(),
+  max_ram_gb_total: int('max_ram_gb_total').default(4).notNull(),
+  max_disk_gb_total: int('max_disk_gb_total').default(100).notNull(),
   max_public_ports: int('max_public_ports').default(10).notNull(),
   max_snapshots_per_vm: int('max_snapshots_per_vm').default(3).notNull(),
   updated_at: timestamp('updated_at').onUpdateNow(),

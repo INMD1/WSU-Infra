@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import { portForwardService } from '@/services/portForwardService';
 import { requireAuth } from '@/lib/apiAuth';
 
-const TENANT_ID = 'tenant-uuid-1234';
-
 /**
  * DELETE /api/port-forwards/[id]
  * 포트 포워딩 규칙 삭제 — pfSense에서도 제거
@@ -17,7 +15,7 @@ export async function DELETE(
 
   try {
     const { id } = await params;
-    const deleted = await portForwardService.delete(id, TENANT_ID);
+    const deleted = await portForwardService.delete(id);
 
     if (!deleted) {
       return NextResponse.json({ success: false, message: 'Rule not found' }, { status: 404 });

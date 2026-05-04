@@ -3,24 +3,38 @@ import { quotaService } from '@/services/quotaService';
 
 /**
  * 3.1 내 쿼터 및 사용량 조회
- * GET /api/quotas
+ * GET /api/quotas?userId=<owner_id>
  */
-export async function GET() {
-  const data = await quotaService.getQuota('tenant-uuid-1234');
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const userId = searchParams.get('userId');
+
+  if (!userId) {
+    return NextResponse.json({ error: 'userId query parameter is required' }, { status: 400 });
+  }
+
+  const data = await quotaService.getQuota(userId);
   return NextResponse.json(data);
 }
 
 /**
  * 3.2 쿼터 수정 (관리자 전용)
- * PATCH /api/quotas
+ * PATCH /api/quotas?userId=<owner_id>
  */
 export async function PATCH(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get('userId');
+
+    if (!userId) {
+      return NextResponse.json({ error: 'userId query parameter is required' }, { status: 400 });
+    }
+
     const body = await request.json();
-    await quotaService.updateQuota('tenant-uuid-1234', body);
+    await quotaService.updateQuota(userId, body);
 
     return NextResponse.json({
-      tenant_id: 'tenant-uuid-1234',
+      owner_id: userId,
       message: 'Quota updated successfully',
     });
   } catch (error) {
