@@ -47,13 +47,16 @@ try {
   # 네트워크가 주어졌으면 그 PG 가 실제로 존재하는 호스트로만 deploy 후보 제한.
   # (예: Internal-VNIC 는 vSwitch2 에만 있는데 클러스터의 모든 호스트가 vSwitch2 를
   #  갖지는 않을 때 SDRS 가 잘못된 호스트로 떨어뜨려 NIC 할당이 실패하는 문제 해결)
+  # PowerCLI -Name 매칭이 wildcard 로 동작해 정확매칭에 실패할 수 있어 Where-Object 로 직접 필터.
   $networkHosts = $null
+  $standardPgs = @()
   if ($NetworkName) {
-    $networkHosts = Get-VirtualPortGroup -Name $NetworkName -ErrorAction SilentlyContinue |
-                    ForEach-Object { $_.VMHost } | Sort-Object -Property Name -Unique
-    if (-not $networkHosts) {
-      # VDS 또는 opaque 인 경우는 모든 호스트에서 사용 가능하다고 가정 (보통 그러함)
-      $vds = Get-VDPortgroup -Name $NetworkName -ErrorAction SilentlyContinue
+    $standardPgs = @(Get-VirtualPortGroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName })
+    if ($standardPgs.Count -gt 0) {
+      $networkHosts = $standardPgs | Select-Object -ExpandProperty VMHost | Sort-Object Name -Unique
+      Write-Output ("Standard PG '{0}' 보유 호스트: {1}" -f $NetworkName, (($networkHosts | Select-Object -ExpandProperty Name) -join ', '))
+    } else {
+      $vds = Get-VDPortgroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName }
       if (-not $vds) {
         Write-Warning ("Could not pre-resolve hosts for network '{0}' — relying on PowerCLI defaults" -f $NetworkName)
       }
@@ -104,40 +107,54 @@ try {
   Write-Output ("Deployed: {0}" -f $vm.Name)
 
   # 네트워크 어댑터를 지정 포트그룹에 연결하고 StartConnected 활성화.
-  # 표준 / 분산 / opaque(NSX) 네트워크 모두 다단계 폴백으로 검색.
+  # Where-Object 정확매칭 + Move-VM 으로 호스트 정합성 보장 + -Portgroup 객체 직접 전달.
   if ($NetworkName) {
-    # 1) 표준 포트그룹 (모든 호스트에서 검색 — VM 이 떨어진 호스트가 아닌 다른 호스트에 있을 수 있음)
-    $portgroup = Get-VirtualPortGroup -Name $NetworkName -ErrorAction SilentlyContinue | Select-Object -First 1
+    # VM 이 deploy 된 실제 호스트 확인 (deploy 후 객체 갱신)
+    $vm = Get-VM -Name $vm.Name
 
-    # 2) 분산 포트그룹 (VDS)
-    if (-not $portgroup) {
-      $portgroup = Get-VDPortgroup -Name $NetworkName -ErrorAction SilentlyContinue | Select-Object -First 1
+    $portgroup = $null
+    $isVds = $false
+
+    # 1) VM 의 현재 호스트에서 표준 PG 우선 검색 (이미 같은 호스트면 Move 불필요)
+    $portgroup = $vm.VMHost | Get-VirtualPortGroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName } | Select-Object -First 1
+
+    # 2) 다른 호스트의 표준 PG → VM 을 그 호스트로 vMotion 이동 후 PG 재조회
+    if (-not $portgroup -and $standardPgs.Count -gt 0) {
+      $targetHost = $standardPgs | Select-Object -ExpandProperty VMHost | Sort-Object @{Expression={ $_.MemoryTotalGB - $_.MemoryUsageGB }; Descending=$true} | Select-Object -First 1
+      if ($targetHost.Name -ne $vm.VMHost.Name) {
+        Write-Output ("Moving VM '{0}' from '{1}' to '{2}' (network 보유 호스트)" -f $vm.Name, $vm.VMHost.Name, $targetHost.Name)
+        Move-VM -VM $vm -Destination $targetHost -Confirm:$false -ErrorAction Stop | Out-Null
+        $vm = Get-VM -Name $vm.Name
+      }
+      $portgroup = $vm.VMHost | Get-VirtualPortGroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName } | Select-Object -First 1
     }
 
-    # 3) Get-View 로 모든 종류의 Network 검색 (opaque network 포함)
+    # 3) VDS 분산 포트그룹
     if (-not $portgroup) {
-      $escaped = [regex]::Escape($NetworkName)
-      $netView = Get-View -ViewType Network -Filter @{"Name" = "^$escaped$"} -ErrorAction SilentlyContinue | Select-Object -First 1
+      $portgroup = Get-VDPortgroup -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName } | Select-Object -First 1
+      if ($portgroup) { $isVds = $true }
+    }
+
+    # 4) Get-View 로 모든 Network 객체 (opaque/NSX 포함)
+    if (-not $portgroup) {
+      $netView = Get-View -ViewType Network -Property Name -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $NetworkName } | Select-Object -First 1
       if ($netView) {
         $portgroup = Get-VIObjectByVIView -MORef $netView.MoRef
       }
     }
 
     if (-not $portgroup) {
-      $available = (Get-VirtualPortGroup | Select-Object -ExpandProperty Name) +
-                   (Get-VDPortgroup | Select-Object -ExpandProperty Name) | Select-Object -Unique
+      $std = (Get-VirtualPortGroup | Select-Object -ExpandProperty Name -ErrorAction SilentlyContinue)
+      $vds = (Get-VDPortgroup | Select-Object -ExpandProperty Name -ErrorAction SilentlyContinue)
+      $available = @($std + $vds) | Select-Object -Unique
       throw ("Network not found: {0}. Available: {1}" -f $NetworkName, ($available -join ', '))
     }
 
     $nics = Get-NetworkAdapter -VM $vm
     foreach ($nic in $nics) {
-      if ($portgroup.GetType().Name -like '*DPortgroup*') {
-        Set-NetworkAdapter -NetworkAdapter $nic -Portgroup $portgroup -StartConnected $true -Confirm:$false | Out-Null
-      } else {
-        Set-NetworkAdapter -NetworkAdapter $nic -NetworkName $NetworkName -StartConnected $true -Confirm:$false | Out-Null
-      }
+      Set-NetworkAdapter -NetworkAdapter $nic -Portgroup $portgroup -StartConnected $true -Confirm:$false -ErrorAction Stop | Out-Null
     }
-    Write-Output ("Network attached: {0} (type={1}, StartConnected=true)" -f $NetworkName, $portgroup.GetType().Name)
+    Write-Output ("Network attached: {0} (type={1}, host={2}, StartConnected=true)" -f $NetworkName, $portgroup.GetType().Name, $vm.VMHost.Name)
   }
 }
 finally {
