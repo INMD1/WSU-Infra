@@ -737,6 +737,52 @@ const govcStrategy = {
   },
 
   /**
+   * ESXi WebMKS ticket 발급 — 자체 호스팅 wmks.js 가 ESXi 호스트와 직접 wss 연결.
+   * vCenter UI 의 SAML 필터를 우회하므로 web 콘솔이 vCenter 정책과 무관하게 작동.
+   */
+  async getMksTicket(name: string): Promise<{
+    ticket: string;
+    host: string;
+    port: number;
+    cfgFile: string;
+    sslThumbprint: string;
+    vmId: string;
+    vmName: string;
+  }> {
+    const env = this.getEnv();
+    const vcenterHost = (env.GOVC_URL || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (!vcenterHost) throw new Error('GOVC_URL is not set');
+
+    const scriptPath = path.resolve(process.cwd(), 'scripts/vsphere/get-mks-ticket.ps1');
+    const args = [
+      '-NoProfile', '-NonInteractive',
+      '-File', scriptPath,
+      '-VCenterServer', vcenterHost,
+      '-Username', env.GOVC_USERNAME,
+      '-VMName', name,
+    ];
+
+    try {
+      const { stdout, stderr } = await execFilePromise('pwsh', args, {
+        env: { ...process.env, VCENTER_PASSWORD: env.GOVC_PASSWORD },
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      const jsonLine = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{')).pop();
+      if (!jsonLine) {
+        throw new Error(`MKS ticket JSON 추출 실패. stdout=${stdout.slice(0, 500)} stderr=${stderr.slice(0, 500)}`);
+      }
+      const info = JSON.parse(jsonLine);
+      console.log(`[pwsh] MKS ticket for ${name}: host=${info.host}:${info.port}, vmId=${info.vmId}`);
+      return info;
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        throw new Error('pwsh(PowerShell) not found. PowerShell + VMware.PowerCLI 설치 필요.');
+      }
+      throw err;
+    }
+  },
+
+  /**
    * vSphere HTML5 웹콘솔 URL 발급. 단명 sessionTicket 이 포함되어
    * 학생이 vCenter 계정 없이도 새 탭에서 콘솔 접근 가능.
    * 요구: vCenter Standard 이상 라이선스. govc 0.30+.
@@ -919,6 +965,10 @@ const restStrategy = {
     throw new Error('getConsoleUrl not implemented for REST strategy');
   },
 
+  async getMksTicket(_name: string): Promise<any> {
+    throw new Error('getMksTicket not implemented for REST strategy');
+  },
+
   async deployLibraryItemViaPowerCLI(_opts: any): Promise<void> {
     throw new Error('deployLibraryItemViaPowerCLI not implemented for REST strategy');
   },
@@ -990,6 +1040,10 @@ export const esxiClient = {
 
   async getConsoleUrl(name: string): Promise<string> {
     return await this.strategy.getConsoleUrl(name);
+  },
+
+  async getMksTicket(name: string) {
+    return await this.strategy.getMksTicket(name);
   },
 
   async powerOn(name: string) {

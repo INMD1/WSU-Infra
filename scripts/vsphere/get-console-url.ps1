@@ -40,12 +40,15 @@ try {
   $thumbprint = $hostView.Summary.Config.SslThumbprint
   $serverGuid = $si.Content.About.InstanceUuid
 
-  # VMRC 데스크톱 앱 URL.
-  # vCenter SAML 필터가 /ui/webconsole.html 의 sessionTicket 인증을 차단하는 환경에서
-  # 가장 안정적인 우회 — 클라이언트 PC 의 VMRC 가 ticket 으로 직접 vCenter 에 접속.
-  # 형식: vmrc://clone:<ticket>@<vcenter>:443/?moid=<vm-moref>
-  $moid = $vmView.MoRef.Value
-  $url = "vmrc://clone:${ticket}@${VCenterServer}:443/?moid=${moid}"
+  # 표준 vCenter HTML5 웹콘솔 URL — sessionTicket 으로 SSO 우회 시도
+  $vmId = [System.Net.WebUtility]::UrlEncode($vmView.MoRef.Value)
+  $name = [System.Net.WebUtility]::UrlEncode($VMName)
+  $hostEnc = [System.Net.WebUtility]::UrlEncode("${hostName}:443")
+  $tk = [System.Net.WebUtility]::UrlEncode($ticket)
+  $tp = [System.Net.WebUtility]::UrlEncode($thumbprint)
+  $gid = [System.Net.WebUtility]::UrlEncode($serverGuid)
+
+  $url = "https://${VCenterServer}/ui/webconsole.html?vmId=${vmId}&vmName=${name}&host=${hostEnc}&sessionTicket=${tk}&thumbprint=${tp}&serverGuid=${gid}&locale=en_US"
   Write-Output $url
 }
 finally {

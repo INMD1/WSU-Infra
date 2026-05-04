@@ -24,12 +24,21 @@ export async function GET(
   }
 
   try {
-    const url = await esxiClient.getConsoleUrl(vm.name);
-    return NextResponse.json({ url, vm_name: vm.name });
+    // ESXi WebMKS ticket — 자체 호스팅 wmks.js 가 ESXi 와 직접 wss 연결 (vCenter UI 우회)
+    const mks = await esxiClient.getMksTicket(vm.name);
+    return NextResponse.json({
+      vm_name: vm.name,
+      ticket: mks.ticket,
+      host: mks.host,
+      port: mks.port,
+      sslThumbprint: mks.sslThumbprint,
+      cfgFile: mks.cfgFile,
+      vmId: mks.vmId,
+    });
   } catch (error: any) {
-    console.error('[Console API] Failed to get console URL:', error);
+    console.error('[Console API] Failed to get MKS ticket:', error);
     return NextResponse.json(
-      { message: 'Failed to generate console URL', error: error?.message ?? String(error) },
+      { message: 'Failed to acquire MKS ticket', error: error?.message ?? String(error) },
       { status: 500 }
     );
   }

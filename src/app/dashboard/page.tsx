@@ -286,30 +286,9 @@ export default function DashboardPage() {
     }
   };
 
-  // ── 웹콘솔 열기 (VMRC 데스크톱 앱) ─────────────
-  const VMRC_DOWNLOAD_URL = 'https://customerconnect.vmware.com/downloads/info/slug/desktop_end_user_computing/vmware_remote_console/';
-  const handleOpenConsole = async (vmId: string) => {
-    try {
-      const res = await authFetch(`/api/vms/${vmId}/console`);
-      const data = await res.json();
-      if (!res.ok || !data.url) {
-        alert(data.message || '콘솔 URL을 가져올 수 없습니다');
-        return;
-      }
-      // vmrc:// 스킴은 OS가 VMware Remote Console 앱으로 핸들링.
-      // 미설치 시 브라우저가 무반응이라 별도 안내 띄움.
-      window.location.href = data.url;
-      setTimeout(() => {
-        const launched = confirm(
-          'VMware Remote Console(VMRC)이 자동 실행됐나요?\n\n' +
-          '확인: 잘 실행됐음 (이 창 닫기)\n' +
-          '취소: 안 됐음 → VMRC 설치 페이지 열기'
-        );
-        if (!launched) window.open(VMRC_DOWNLOAD_URL, '_blank');
-      }, 2000);
-    } catch {
-      alert('네트워크 오류');
-    }
+  // ── 웹콘솔 열기 (자체 호스팅 wmks.js → ESXi WebMKS 직접 연결) ──
+  const handleOpenConsole = (vmId: string) => {
+    window.open(`/console/${vmId}`, '_blank', 'noopener,noreferrer');
   };
 
   // ── 포트포워딩 삭제 ───────────────────────────
