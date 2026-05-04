@@ -74,25 +74,40 @@ try {
   Write-Output ("Deployed: {0}" -f $vm.Name)
 
   # 네트워크 어댑터를 지정 포트그룹에 연결하고 StartConnected 활성화.
-  # 표준 포트그룹과 분산 포트그룹(VDS) 모두 지원 — 표준 먼저 찾고 없으면 분산.
+  # 표준 / 분산 / opaque(NSX) 네트워크 모두 다단계 폴백으로 검색.
   if ($NetworkName) {
-    $portgroup = Get-VirtualPortGroup -Name $NetworkName -VMHost $vm.VMHost -ErrorAction SilentlyContinue
+    # 1) 표준 포트그룹 (모든 호스트에서 검색 — VM 이 떨어진 호스트가 아닌 다른 호스트에 있을 수 있음)
+    $portgroup = Get-VirtualPortGroup -Name $NetworkName -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    # 2) 분산 포트그룹 (VDS)
     if (-not $portgroup) {
-      $portgroup = Get-VDPortgroup -Name $NetworkName -ErrorAction SilentlyContinue
+      $portgroup = Get-VDPortgroup -Name $NetworkName -ErrorAction SilentlyContinue | Select-Object -First 1
     }
+
+    # 3) Get-View 로 모든 종류의 Network 검색 (opaque network 포함)
     if (-not $portgroup) {
-      throw ("Network not found: {0}" -f $NetworkName)
+      $escaped = [regex]::Escape($NetworkName)
+      $netView = Get-View -ViewType Network -Filter @{"Name" = "^$escaped$"} -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($netView) {
+        $portgroup = Get-VIObjectByVIView -MORef $netView.MoRef
+      }
+    }
+
+    if (-not $portgroup) {
+      $available = (Get-VirtualPortGroup | Select-Object -ExpandProperty Name) +
+                   (Get-VDPortgroup | Select-Object -ExpandProperty Name) | Select-Object -Unique
+      throw ("Network not found: {0}. Available: {1}" -f $NetworkName, ($available -join ', '))
     }
 
     $nics = Get-NetworkAdapter -VM $vm
     foreach ($nic in $nics) {
-      if ($portgroup.GetType().Name -eq 'VDPortgroupImpl') {
+      if ($portgroup.GetType().Name -like '*DPortgroup*') {
         Set-NetworkAdapter -NetworkAdapter $nic -Portgroup $portgroup -StartConnected $true -Confirm:$false | Out-Null
       } else {
         Set-NetworkAdapter -NetworkAdapter $nic -NetworkName $NetworkName -StartConnected $true -Confirm:$false | Out-Null
       }
     }
-    Write-Output ("Network attached: {0} (StartConnected=true)" -f $NetworkName)
+    Write-Output ("Network attached: {0} (type={1}, StartConnected=true)" -f $NetworkName, $portgroup.GetType().Name)
   }
 }
 finally {
