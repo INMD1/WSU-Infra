@@ -511,45 +511,83 @@ const govcStrategy = {
   },
 
   /**
-   * Content Library 목록 조회
+   * Content Library 목록 조회 — `govc library.ls -json /`
    */
   async listContentLibraries(): Promise<{ id: string; name: string; type: string; }[]> {
     const env = this.getEnv();
-    const { stdout } = await execPromise(`govc about.library.ls -json`, { env });
-    const data = JSON.parse(stdout);
-
-    return (data.Libraries || []).map((lib: any) => ({
-      id: lib.Self.Value,
-      name: lib.Config.Name,
-      type: lib.Config.Type || 'local'
-    }));
+    const { stdout } = await execPromise(`govc library.ls -json /`, { env });
+    if (!stdout.trim()) return [];
+    const raw = JSON.parse(stdout);
+    const libs: any[] = Array.isArray(raw)
+      ? raw
+      : (raw.library ?? raw.Library ?? raw.libraries ?? []);
+    return libs
+      .map((lib: any) => {
+        if (typeof lib === 'string') {
+          const name = lib.replace(/^\//, '');
+          return { id: name, name, type: 'local' };
+        }
+        return {
+          id: lib.id ?? lib.ID ?? lib.name ?? lib.Name ?? '',
+          name: lib.name ?? lib.Name ?? '',
+          type: lib.type ?? lib.Type ?? 'local',
+        };
+      })
+      .filter(l => l.name);
   },
 
   /**
-   * Content Library 내 이미지 (OVA/OVF) 목록 조회
-   * @param libraryPath - Library 경로. 미지정 시 CONTENT_LIBRARY_PATH 환경변수 사용 (기본 "/")
+   * Content Library 내 이미지(OVA/OVF) 목록 조회.
+   * @param libraryPath - 특정 라이브러리 경로(예: "/MyLib"). "/" 또는 미지정 시 모든 라이브러리 순회.
+   *                      미지정 시 CONTENT_LIBRARY_PATH 환경변수 사용.
    */
   async listCloudImages(libraryPath = process.env.CONTENT_LIBRARY_PATH || '/'): Promise<CloudImage[]> {
     const env = this.getEnv();
+    const trimmed = libraryPath.replace(/\/+$/, '');
 
-    // govc about.library.item.ls 로 Library Item 조회
-    const { stdout } = await execPromise(`govc about.library.item.ls -json ${libraryPath}`, { env });
-    const data = JSON.parse(stdout);
+    const itemsAt = async (libPath: string): Promise<CloudImage[]> => {
+      // 끝에 슬래시를 붙이면 govc 가 라이브러리 내 항목을 반환
+      const { stdout } = await execPromise(`govc library.ls -json "${libPath}/"`, { env });
+      if (!stdout.trim()) return [];
+      const raw = JSON.parse(stdout);
+      const items: any[] = Array.isArray(raw)
+        ? raw
+        : (raw.item ?? raw.Item ?? raw.items ?? []);
+      return items.map((item: any) => {
+        const size = Number(item.size ?? item.Size ?? item.FileSize ?? 0);
+        const name = item.name ?? item.Name ?? 'Unknown';
+        return {
+          id: item.id ?? item.ID ?? name,
+          name,
+          description: item.description ?? item.Description ?? '',
+          type: this.detectImageType(name),
+          size,
+          size_gb: Math.round(size / (1024 ** 3) * 100) / 100,
+          created_time: item.creation_time ?? item.CreationTime ?? new Date().toISOString(),
+          updated_time: item.last_modified_time ?? item.LastModifiedTime ?? item.CreationTime ?? new Date().toISOString(),
+          tags: [],
+        };
+      });
+    };
 
-    return (data.Items || []).map((item: any) => {
-      const fileSize = item.FileSize || 0;
-      return {
-        id: item.Self?.Value || item.Info?.Key || '',
-        name: item.Info?.Name || 'Unknown',
-        description: item.Info?.Description || '',
-        type: this.detectImageType(item.Info?.Name || ''),
-        size: fileSize,
-        size_gb: Math.round(fileSize / (1024 ** 3) * 100) / 100,
-        created_time: item.Info?.CreatedTime?.toISOString() || new Date().toISOString(),
-        updated_time: item.Info?.UpdatedTime?.toISOString() || new Date().toISOString(),
-        tags: item.Tag?.Attachment?.map((t: any) => t.Name) || []
-      };
-    });
+    // 특정 라이브러리 경로
+    if (trimmed) {
+      return itemsAt(trimmed);
+    }
+
+    // 루트: 모든 라이브러리에서 항목 수집
+    const libs = await this.listContentLibraries();
+    const all: CloudImage[] = [];
+    for (const lib of libs) {
+      const libPath = `/${lib.name}`;
+      try {
+        const items = await itemsAt(libPath);
+        all.push(...items);
+      } catch (err) {
+        console.warn(`[infrastructure] Failed to list items in ${libPath}:`, err);
+      }
+    }
+    return all;
   },
 
   /**
