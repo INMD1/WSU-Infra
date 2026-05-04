@@ -484,7 +484,8 @@ const govcStrategy = {
       // - "/Lib/Item" 형식 → Content Library 항목 → govc library.deploy
       // - "*.ova" / "*.ovf" → CLOUD_IMAGE_DATASTORE 의 OVA 파일 → import 후 clone (legacy)
       // - 그 외 → 기존 템플릿 VM 이름 → vm.clone
-      if (params.template.startsWith('/')) {
+      const isLibraryDeploy = params.template.startsWith('/');
+      if (isLibraryDeploy) {
         // PowerCLI 는 New-VM 에 DatastoreCluster 객체를 직접 받아 SDRS 로 자동 배치하므로
         // govc library.deploy 의 StoragePod 미지원 한계를 회피.
         // selectBestHost 가 inventory path 를 반환 (예: /<dc>/host/<cluster>/host01) — 마지막 세그먼트만 사용
@@ -496,6 +497,7 @@ const govcStrategy = {
           resourcePool: env.GOVC_RESOURCE_POOL,
           folder: env.GOVC_FOLDER,
           vmHost: vmHostName,
+          network: params.network || env.GOVC_NETWORK,
         });
       } else {
         const templateName = /\.(ova|ovf)$/i.test(params.template)
@@ -510,10 +512,14 @@ const govcStrategy = {
       }
 
       // Resource & Network
-      console.log(`[govc] Configuring resources and network...`);
+      console.log(`[govc] Configuring resources...`);
       await execPromise(`govc vm.change -vm="${params.name}" -c=${params.vcpu} -m=${ramMb}`, { env });
-      const network = params.network || env.GOVC_NETWORK;
-      await execPromise(`govc vm.network.change -vm="${params.name}" -net="${network}" ethernet-0`, { env });
+      // 라이브러리 배포는 PowerCLI 가 이미 NIC 를 지정 포트그룹에 연결 + StartConnected=true 처리.
+      // clone 분기에서만 govc 로 NIC 네트워크 변경.
+      if (!isLibraryDeploy) {
+        const network = params.network || env.GOVC_NETWORK;
+        await execPromise(`govc vm.network.change -vm="${params.name}" -net="${network}" ethernet-0`, { env });
+      }
 
       // Cloud-init 주입
       // ExtraConfig가 기본 (ISO 불필요, StoragePod 호환)
@@ -610,6 +616,7 @@ const govcStrategy = {
     resourcePool?: string;
     folder?: string;
     vmHost?: string;
+    network?: string;
   }): Promise<void> {
     const env = this.getEnv();
     const trimmed = opts.libraryItemPath.replace(/^\/+/, '');
@@ -641,6 +648,7 @@ const govcStrategy = {
     if (opts.resourcePool) args.push('-ResourcePoolName', opts.resourcePool);
     if (opts.folder) args.push('-FolderName', opts.folder);
     if (opts.vmHost) args.push('-VMHostName', opts.vmHost);
+    if (opts.network) args.push('-NetworkName', opts.network);
 
     console.log(`[pwsh] Deploying library item "${opts.libraryItemPath}" → "${opts.vmName}" via PowerCLI, ds=${opts.datastoreOrCluster}`);
     try {
