@@ -10,6 +10,7 @@ declare global {
       CONST?: {
         ConnectionState?: { CONNECTED: number; DISCONNECTED: number; ERROR: number };
       };
+      widgetProto?: any;
       createWMKS: (containerId: string, options?: any) => any;
     };
   }
@@ -128,11 +129,16 @@ export default function ConsolePage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#000', color: '#fff' }}>
-      {/* VMware WMKS CSS (jsDelivr) */}
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vmware-wmks@1.0.0/css/css/wmks-all.min.css" />
+      {/* VMware WMKS CSS (local) */}
+      <link rel="stylesheet" href="/lib/wmks/css/wmks-all.min.css" />
+      {/* 0) Webpack polyfill — wmks.js 의 __webpack_require__.n 지원 */}
+      <Script
+        src="/lib/webpack-polyfill.js"
+        strategy="beforeInteractive"
+      />
       {/* 1) jQuery 먼저 */}
       <Script
-        src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
+        src="/lib/jquery.min.js"
         strategy="afterInteractive"
         onLoad={() => setJqueryReady(true)}
         onError={() => setError('jQuery 로드 실패')}
@@ -140,19 +146,19 @@ export default function ConsolePage() {
       {/* 2) jQuery UI Widget Factory — wmks 가 widget 으로 등록되려면 필요 */}
       {jqueryReady && (
         <Script
-          src="https://cdn.jsdelivr.net/npm/jquery-ui@1.13.2/dist/jquery-ui.min.js"
+          src="/lib/jquery-ui.min.js"
           strategy="afterInteractive"
           onLoad={() => setJqueryUiReady(true)}
           onError={() => setError('jQuery UI 로드 실패')}
         />
       )}
-      {/* 3) WMKS */}
+      {/* 3) WMKS — VMware PowerCLI 의 로컬 wmks.js 사용 (webpack 문제 해결) */}
       {jqueryUiReady && (
         <Script
-          src="https://cdn.jsdelivr.net/npm/vmware-wmks@1.0.0/wmks.min.js"
+          src="/lib/wmks/wmks.min.js"
           strategy="afterInteractive"
           onLoad={() => setWmksReady(true)}
-          onError={() => setError('wmks.js 로드 실패 (jsDelivr 접근 불가일 수 있음)')}
+          onError={() => setError('wmks.js 로드 실패')}
         />
       )}
       <header style={{ padding: '0.5rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1a1a1a', borderBottom: '1px solid #333' }}>
