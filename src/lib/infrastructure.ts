@@ -499,7 +499,7 @@ const govcStrategy = {
       console.log(`[govc] Configuring resources and network...`);
       await execPromise(`govc vm.change -vm="${params.name}" -c=${params.vcpu} -m=${ramMb}`, { env });
       const network = params.network || env.GOVC_NETWORK;
-      await execPromise(`govc device.network.change -vm="${params.name}" -net="${network}" ethernet-0`, { env });
+      await execPromise(`govc vm.network.change -vm="${params.name}" -net="${network}" ethernet-0`, { env });
 
       // Cloud-init 주입
       // ExtraConfig가 기본 (ISO 불필요, StoragePod 호환)
