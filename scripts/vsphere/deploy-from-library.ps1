@@ -154,7 +154,10 @@ try {
 
     $nics = Get-NetworkAdapter -VM $vm
     foreach ($nic in $nics) {
-      Set-NetworkAdapter -NetworkAdapter $nic -Portgroup $portgroup -StartConnected $true -Confirm:$false -ErrorAction Stop | Out-Null
+      # 두 단계 분리: -Portgroup 과 -StartConnected 가 다른 parameter set 에 속하는
+      # PowerCLI 버전 차이 회피
+      Set-NetworkAdapter -NetworkAdapter $nic -Portgroup $portgroup -Confirm:$false -ErrorAction Stop | Out-Null
+      Set-NetworkAdapter -NetworkAdapter $nic -StartConnected $true -Confirm:$false -ErrorAction Stop | Out-Null
     }
     Write-Output ("Network attached: {0} (type={1}, host={2}, StartConnected=true)" -f $NetworkName, $portgroup.GetType().Name, $vm.VMHost.Name)
   }
