@@ -587,31 +587,36 @@ const govcStrategy = {
       const { stdout: ipStdout } = await execPromise(`govc vm.ip -wait=5m "${params.name}"`, { env });
       let ipAddress = ipStdout.trim();
 
-      // cloud-init 의 네트워크 재설정 / DHCP renewal 로 IP 가 30~60초 사이에 한두 번
-      // 바뀔 수 있어, 5 초 간격 폴링하며 연속 2 회 같은 IP 가 보일 때까지(=안정화) 대기.
-      // 최대 60초. 매 폴링마다 ipAddress 갱신 — 마지막 안정 IP 가 결과.
-      const queryCurrentIp = async (): Promise<string | null> => {
+      // cloud-init 네트워크 재설정 / DHCP renewal 로 IP 가 ~90초 사이 여러 번 바뀔 수 있어
+      // 5 초 간격 폴링하며 연속 3 회 같은 IP 가 보일 때까지(=15초 변화 없음) 대기. 최대 90초.
+      // 매 폴링마다 후보 IP 들 모두 로깅 → IP 중복 보고 / NIC 다중 케이스 진단 가능.
+      const queryCurrentIps = async (): Promise<string[]> => {
         try {
           const { stdout } = await execPromise(`govc vm.info -e -json "${params.name}"`, { env });
           const info = JSON.parse(stdout);
           const vm = info?.VirtualMachines?.[0] ?? info?.virtualMachines?.[0];
           const nets: any[] = vm?.Guest?.Net ?? vm?.guest?.net ?? [];
           const ips: string[] = nets.flatMap((n: any) => (n.IpAddress ?? n.ipAddress ?? []) as string[]);
-          return ips.find(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('169.254.')) ?? null;
+          return ips.filter(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('169.254.'));
         } catch {
-          return null;
+          return [];
         }
       };
 
       let stableHits = 0;
-      for (let i = 0; i < 12 && stableHits < 2; i++) {
+      for (let i = 0; i < 18 && stableHits < 3; i++) {
         await new Promise(r => setTimeout(r, 5000));
-        const cur = await queryCurrentIp();
-        if (!cur) continue;
+        const ips = await queryCurrentIps();
+        if (ips.length === 0) continue;
+        // 가장 마지막에 보고된 IP 를 채택 — DHCP 갱신 후 새 주소가 항상 끝쪽에 추가됨
+        const cur = ips[ips.length - 1];
         if (cur === ipAddress) {
           stableHits++;
+          if (ips.length > 1) {
+            console.log(`[govc] IP poll [${i}]: candidates=[${ips.join(', ')}], picked=${cur}, stable=${stableHits}/3`);
+          }
         } else {
-          console.log(`[govc] IP refreshed: ${ipAddress} → ${cur}`);
+          console.log(`[govc] IP refreshed: ${ipAddress} → ${cur} (candidates=[${ips.join(', ')}])`);
           ipAddress = cur;
           stableHits = 0;
         }
@@ -757,7 +762,7 @@ const govcStrategy = {
         env: { ...process.env, VCENTER_PASSWORD: env.GOVC_PASSWORD },
         maxBuffer: 4 * 1024 * 1024,
       });
-      const url = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('https://')).pop();
+      const url = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('vmrc://') || l.startsWith('https://')).pop();
       if (!url) {
         throw new Error(`Console URL 추출 실패. stdout=${stdout.slice(0, 500)} stderr=${stderr.slice(0, 500)}`);
       }
@@ -1198,6 +1203,11 @@ export const pfsenseClient = {
 
   async deletePortForward(id: string): Promise<void> {
     this.assertConfigured();
+    // tracker 가 빈값/없음/0 같은 무효한 값이면 호출하지 않고 idempotent 통과
+    if (!id || id === '0' || id === 'null' || id === 'undefined') {
+      console.warn(`[pfSense] tracker 가 무효('${id}') — 삭제 skip`);
+      return;
+    }
     const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}&apply=true`;
     console.log(`[pfSense] DELETE ${url}`);
     const res = await this.fetchWithTls(url, { method: 'DELETE' });
@@ -1206,9 +1216,13 @@ export const pfsenseClient = {
     try { json = JSON.parse(rawText); } catch { /* non-JSON */ }
     console.log(`[pfSense] delete response: status=${res.status}, body=${rawText.slice(0, 600)}`);
 
-    // 404/이미 없음은 idempotent 하게 통과 (VM 재삭제·중복 호출 방지)
-    if (res.status === 404 || (json && (json.code === 404 || json.response_id === 'NOT_FOUND'))) {
-      console.warn(`[pfSense] rule ${id} 이미 없음 — 삭제 skip`);
+    // 이미 없거나 ID 형식 문제로 pfSense 가 못 찾는 케이스는 모두 idempotent 통과
+    const idempotentResponses = ['NOT_FOUND', 'MODEL_REQUIRES_ID', 'OBJECT_NOT_FOUND'];
+    if (
+      res.status === 404 ||
+      (json && (json.code === 404 || idempotentResponses.includes(json.response_id)))
+    ) {
+      console.warn(`[pfSense] rule ${id} 이미 없거나 식별 불가 — 삭제 skip (response_id=${json?.response_id})`);
       return;
     }
 
