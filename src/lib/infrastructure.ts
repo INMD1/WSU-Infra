@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -6,6 +6,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 
 const execPromise = promisify(exec);
+const execFilePromise = promisify(execFile);
 
 interface VmCreateParams {
   name: string;
@@ -122,8 +123,7 @@ const govcStrategy = {
   async resolveDatastoreForDeploy(name: string): Promise<string> {
     const env = this.getEnv();
 
-    // 모든 데이터스토어 inventory path 조회 (GOVC_DATACENTER 설정 무관하게 작동)
-    // 예: /<dc>/datastore/<pod>/<member1>, /<dc>/datastore/<member3>
+    // 모든 데이터스토어 inventory path 조회
     let allDsPaths: string[] = [];
     try {
       const { stdout } = await execPromise(`govc find / -type s`, { env });
@@ -132,34 +132,49 @@ const govcStrategy = {
       return name;
     }
 
-    // 경로에 "/<name>/" 가 포함된 것이 해당 StoragePod 의 멤버
     const memberPaths = allDsPaths.filter(p => p.includes(`/${name}/`));
-    if (memberPaths.length === 0) {
-      // StoragePod 이 아니거나 이름이 일반 데이터스토어 → 그대로 사용
-      return name;
+    if (memberPaths.length === 0) return name;
+
+    const memberNames = memberPaths
+      .map(p => p.split('/').pop() ?? '')
+      .filter(Boolean);
+
+    // 벌크 + 개별 폴백으로 멤버 free space 수집
+    const infoMap = new Map<string, number>();
+    try {
+      const { stdout } = await execPromise(`govc datastore.info -json`, { env });
+      const data = JSON.parse(stdout);
+      for (const ds of (data?.Datastores ?? []) as any[]) {
+        const dsName = ds?.Info?.Name;
+        const free = Number(ds?.Info?.FreeSpace ?? 0);
+        if (dsName) infoMap.set(dsName, free);
+      }
+    } catch {
+      // 벌크 실패 시 아래 개별 조회로 폴백
+    }
+    for (const memberName of memberNames) {
+      if (infoMap.has(memberName)) continue;
+      try {
+        const { stdout } = await execPromise(`govc datastore.info -json "${memberName}"`, { env });
+        const data = JSON.parse(stdout);
+        const ds = data?.Datastores?.[0];
+        if (ds?.Info?.Name) infoMap.set(ds.Info.Name, Number(ds.Info.FreeSpace ?? 0));
+      } catch {
+        // 다음 멤버 시도
+      }
     }
 
     let best: { name: string; free: number } | null = null;
-    for (const path of memberPaths) {
-      try {
-        const { stdout } = await execPromise(`govc datastore.info -json "${path}"`, { env });
-        const data = JSON.parse(stdout);
-        const ds = data?.Datastores?.[0];
-        if (!ds) continue;
-        const free = Number(ds.Info?.FreeSpace ?? 0);
-        const memberName = ds.Info?.Name ?? path.split('/').pop() ?? '';
-        if (!memberName) continue;
-        if (!best || free > best.free) best = { name: memberName, free };
-      } catch {
-        // 일시 오류는 건너뛰고 다른 멤버 시도
-      }
+    for (const memberName of memberNames) {
+      const free = infoMap.get(memberName);
+      if (free === undefined) continue;
+      if (!best || free > best.free) best = { name: memberName, free };
     }
 
     if (best) {
       console.log(`[govc] Resolved StoragePod "${name}" → member "${best.name}" (${(best.free / (1024 ** 3)).toFixed(2)}GB free)`);
       return best.name;
     }
-    console.warn(`[govc] StoragePod "${name}" 멤버 정보를 가져오지 못했습니다 — 클러스터 이름 그대로 사용`);
     return name;
   },
 
@@ -456,14 +471,15 @@ const govcStrategy = {
       // - "*.ova" / "*.ovf" → CLOUD_IMAGE_DATASTORE 의 OVA 파일 → import 후 clone (legacy)
       // - 그 외 → 기존 템플릿 VM 이름 → vm.clone
       if (params.template.startsWith('/')) {
-        // library.deploy 는 StoragePod 의 SDRS 자동 배치를 신뢰할 수 없으므로
-        // 멤버 데이터스토어 중 가장 여유 있는 곳으로 미리 해석
-        const deployDs = await this.resolveDatastoreForDeploy(datastore);
-        console.log(`[govc] Deploying library item "${params.template}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${deployDs}`);
-        await execPromise(
-          `govc library.deploy -ds="${deployDs}" ${hostFlag} ${poolFlag} ${folderFlag} "${params.template}" "${params.name}"`,
-          { env }
-        );
+        // PowerCLI 는 New-VM 에 DatastoreCluster 객체를 직접 받아 SDRS 로 자동 배치하므로
+        // govc library.deploy 의 StoragePod 미지원 한계를 회피.
+        await this.deployLibraryItemViaPowerCLI({
+          libraryItemPath: params.template,
+          vmName: params.name,
+          datastoreOrCluster: datastore,
+          resourcePool: env.GOVC_RESOURCE_POOL,
+          folder: env.GOVC_FOLDER,
+        });
       } else {
         const templateName = /\.(ova|ovf)$/i.test(params.template)
           ? await this.ensureOvaTemplate(params.template)
@@ -537,6 +553,70 @@ const govcStrategy = {
       if (isoPath) await fs.unlink(isoPath).catch(() => {});
 
       throw error;
+    }
+  },
+
+  /**
+   * Content Library 항목을 PowerCLI 로 배포.
+   * govc library.deploy 가 StoragePod(클러스터) 를 -ds 로 받지 못하는 한계 우회.
+   * PowerCLI 의 New-VM 은 DatastoreCluster 객체를 직접 받아 SDRS 로 자동 배치.
+   *
+   * 요구: PowerShell 7+ 와 VMware.PowerCLI 모듈 사전 설치 (CLAUDE.md 참고)
+   */
+  async deployLibraryItemViaPowerCLI(opts: {
+    libraryItemPath: string;
+    vmName: string;
+    datastoreOrCluster: string;
+    resourcePool?: string;
+    folder?: string;
+  }): Promise<void> {
+    const env = this.getEnv();
+    const trimmed = opts.libraryItemPath.replace(/^\/+/, '');
+    const segments = trimmed.split('/');
+    if (segments.length < 2) {
+      throw new Error(`Invalid library item path: "${opts.libraryItemPath}" (expected /<library>/<item>)`);
+    }
+    const libraryName = segments[0];
+    const itemName = segments.slice(1).join('/');
+
+    const vcenterHost = (env.GOVC_URL || '')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '');
+    if (!vcenterHost) throw new Error('GOVC_URL is not set');
+
+    const scriptPath = path.resolve(process.cwd(), 'scripts/vsphere/deploy-from-library.ps1');
+
+    const args = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-File', scriptPath,
+      '-VCenterServer', vcenterHost,
+      '-Username', env.GOVC_USERNAME,
+      '-LibraryName', libraryName,
+      '-ItemName', itemName,
+      '-VMName', opts.vmName,
+      '-DatastoreName', opts.datastoreOrCluster,
+    ];
+    if (opts.resourcePool) args.push('-ResourcePoolName', opts.resourcePool);
+    if (opts.folder) args.push('-FolderName', opts.folder);
+
+    console.log(`[pwsh] Deploying library item "${opts.libraryItemPath}" → "${opts.vmName}" via PowerCLI, ds=${opts.datastoreOrCluster}`);
+    try {
+      const { stdout, stderr } = await execFilePromise('pwsh', args, {
+        env: { ...process.env, VCENTER_PASSWORD: env.GOVC_PASSWORD },
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      if (stdout?.trim()) console.log(`[pwsh] ${stdout.trim()}`);
+      if (stderr?.trim()) console.warn(`[pwsh stderr] ${stderr.trim()}`);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        throw new Error(
+          'pwsh(PowerShell) 실행 파일을 찾을 수 없습니다. PowerShell 7+ 와 VMware.PowerCLI 모듈을 설치하세요. ' +
+          'Ubuntu: https://learn.microsoft.com/powershell/scripting/install/install-ubuntu  ' +
+          '설치 후: pwsh -c "Install-Module VMware.PowerCLI -Scope CurrentUser -Force"'
+        );
+      }
+      throw err;
     }
   },
 
@@ -696,6 +776,10 @@ const restStrategy = {
 
   async getConsoleUrl(_name: string): Promise<string> {
     throw new Error('getConsoleUrl not implemented for REST strategy');
+  },
+
+  async deployLibraryItemViaPowerCLI(_opts: any): Promise<void> {
+    throw new Error('deployLibraryItemViaPowerCLI not implemented for REST strategy');
   },
 
   async selectBestDatastore(): Promise<string> {
