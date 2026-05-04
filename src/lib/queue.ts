@@ -151,4 +151,12 @@ export class JobQueue {
   }
 }
 
-export const jobQueue = new JobQueue(3);
+// Next.js dev mode 는 라우트별로 모듈을 재평가할 수 있어서 module-scoped const 가
+// 라우트마다 새 인스턴스로 떨어진다. globalThis 에 캐시해서 같은 프로세스 안에선
+// 모든 라우트가 하나의 큐를 공유하도록 보장.
+declare global {
+  // eslint-disable-next-line no-var
+  var __wsuJobQueue: JobQueue | undefined;
+}
+export const jobQueue: JobQueue =
+  globalThis.__wsuJobQueue ?? (globalThis.__wsuJobQueue = new JobQueue(3));
