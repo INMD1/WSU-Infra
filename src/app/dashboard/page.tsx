@@ -106,6 +106,20 @@ export default function DashboardPage() {
     setUsername(localStorage.getItem('username') || '');
     setRole(localStorage.getItem('role') || '');
     fetchData();
+
+    // 페이지 새로고침 시 진행 중이던 vm-create job 이 있으면 폴링 재개
+    authFetch('/api/jobs?active=true')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const active = d?.activeJobs ?? [];
+        if (active.length > 0) {
+          const job = active[0];
+          setCreateResult({ jobId: job.jobId, estimatedWait: 0 });
+          startJobPolling(job.jobId);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchData, router]);
 
   // 이미지 목록 — 토글에 반응해서 재조회

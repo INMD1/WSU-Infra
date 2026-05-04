@@ -236,6 +236,32 @@ export const vmService = {
       priority: job.priority,
     }));
   },
+
+  /**
+   * 진행 중(pending + running)인 모든 vm-create job 반환.
+   * ownerId 가 주어지면 해당 사용자의 job 만 필터.
+   */
+  getActiveVmCreateJobs(ownerId?: string) {
+    const all = [
+      ...jobQueue.getRunningJobs(),
+      ...jobQueue.getPendingJobs(),
+    ];
+    return all
+      .filter(job => job.type === 'vm-create')
+      .filter(job => {
+        if (!ownerId) return true;
+        const jobOwner = (job.payload as any)?.data?.owner_id;
+        // admin 모드(owner_id 없이 생성된) job 은 owner 필터에서 제외
+        return jobOwner === ownerId;
+      })
+      .map(job => ({
+        jobId: job.id,
+        type: job.type,
+        status: job.status,
+        createdAt: job.createdAt,
+        vmName: (job.payload as any)?.data?.name ?? null,
+      }));
+  },
 };
 
 /**
