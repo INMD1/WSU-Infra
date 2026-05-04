@@ -45,6 +45,9 @@ interface CloudImage {
   description?: string;
   type: 'ova' | 'ovf' | 'appliance';
   size: number;
+  size_gb: number;
+  /** govc Content Library 경로. 예: "/MyLib/ubuntu-22.04". VM 배포 시 그대로 전달 */
+  library_path: string;
   created_time: string;
   updated_time: string;
   tags?: string[];
@@ -382,11 +385,6 @@ const govcStrategy = {
     const imageDs = process.env.CLOUD_IMAGE_DATASTORE || 'SSD-DATASTORE-01';
 
     try {
-      // OVA 파일이면 템플릿 VM으로 임포트 (최초 1회)
-      const templateName = /\.(ova|ovf)$/i.test(params.template)
-        ? await this.ensureOvaTemplate(params.template)
-        : params.template;
-
       // 호스트 자동 선택 (메모리 여유 공간 기준)
       const targetHost = params.host || await this.selectBestHost().catch(() => '');
 
@@ -400,15 +398,31 @@ const govcStrategy = {
       const needsCloudInit = params.ssh_public_key || params.password || process.env.CLOUD_INIT_APT_MIRROR;
       const useIso = process.env.CLOUD_INIT_METHOD === 'iso';
 
-      // VM Clone
-      console.log(`[govc] Cloning "${templateName}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${datastore}`);
       const hostFlag = targetHost ? `-host="${targetHost}"` : '';
       const poolFlag = env.GOVC_RESOURCE_POOL ? `-pool="${env.GOVC_RESOURCE_POOL}"` : '';
       const folderFlag = env.GOVC_FOLDER ? `-folder="${env.GOVC_FOLDER}"` : '';
-      await execPromise(
-        `govc vm.clone -vm="${templateName}" -ds="${datastore}" ${hostFlag} ${poolFlag} ${folderFlag} -on=false "${params.name}"`,
-        { env }
-      );
+
+      // template 형식 판별
+      // - "/Lib/Item" 형식 → Content Library 항목 → govc library.deploy
+      // - "*.ova" / "*.ovf" → CLOUD_IMAGE_DATASTORE 의 OVA 파일 → import 후 clone (legacy)
+      // - 그 외 → 기존 템플릿 VM 이름 → vm.clone
+      if (params.template.startsWith('/')) {
+        console.log(`[govc] Deploying library item "${params.template}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${datastore}`);
+        await execPromise(
+          `govc library.deploy -ds="${datastore}" ${hostFlag} ${poolFlag} ${folderFlag} "${params.template}" "${params.name}"`,
+          { env }
+        );
+      } else {
+        const templateName = /\.(ova|ovf)$/i.test(params.template)
+          ? await this.ensureOvaTemplate(params.template)
+          : params.template;
+
+        console.log(`[govc] Cloning "${templateName}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${datastore}`);
+        await execPromise(
+          `govc vm.clone -vm="${templateName}" -ds="${datastore}" ${hostFlag} ${poolFlag} ${folderFlag} -on=false "${params.name}"`,
+          { env }
+        );
+      }
 
       // Resource & Network
       console.log(`[govc] Configuring resources and network...`);
@@ -563,6 +577,7 @@ const govcStrategy = {
           type: this.detectImageType(name),
           size,
           size_gb: Math.round(size / (1024 ** 3) * 100) / 100,
+          library_path: `${libPath}/${name}`,
           created_time: item.creation_time ?? item.CreationTime ?? new Date().toISOString(),
           updated_time: item.last_modified_time ?? item.LastModifiedTime ?? item.CreationTime ?? new Date().toISOString(),
           tags: [],

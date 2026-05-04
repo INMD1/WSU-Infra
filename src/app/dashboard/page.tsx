@@ -49,7 +49,8 @@ interface Vm {
 export default function DashboardPage() {
   const [quotas, setQuotas] = useState<any>(null);
   const [vms, setVms] = useState<Vm[]>([]);
-  const [images, setImages] = useState<{ name: string; size_gb: number }[]>([]);
+  const [images, setImages] = useState<{ name: string; size_gb: number; library_path: string; type: string }[]>([]);
+  const [includeAllImages, setIncludeAllImages] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // VM 생성 모달
@@ -105,16 +106,25 @@ export default function DashboardPage() {
     setUsername(localStorage.getItem('username') || '');
     setRole(localStorage.getItem('role') || '');
     fetchData();
+  }, [fetchData, router]);
 
-    authFetch('/api/images?source=library')
+  // 이미지 목록 — 토글에 반응해서 재조회
+  useEffect(() => {
+    const url = `/api/images?source=library${includeAllImages ? '&include=all' : ''}`;
+    authFetch(url)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         const list = d?.data || [];
         setImages(list);
-        if (list.length > 0) setNewVm(p => ({ ...p, image_id: list[0].name }));
+        // 현재 선택값이 새 목록에 없으면 첫 항목으로 재설정
+        setNewVm(p => {
+          const stillValid = list.some((img: { library_path: string }) => img.library_path === p.image_id);
+          if (stillValid) return p;
+          return { ...p, image_id: list[0]?.library_path ?? '' };
+        });
       })
       .catch(() => {});
-  }, [fetchData, router]);
+  }, [includeAllImages]);
 
   // ── VM 생성 ───────────────────────────────────
   const handleCreateVm = async (e: React.FormEvent) => {
@@ -442,22 +452,42 @@ export default function DashboardPage() {
             <input style={inputStyle} type="number" min={10} value={newVm.disk_gb}
               onChange={e => setNewVm(p => ({ ...p, disk_gb: Number(e.target.value) }))} required />
 
-            <label style={labelStyle}>이미지 (Content Library)</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={labelStyle}>이미지 (Content Library)</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={includeAllImages}
+                  onChange={e => setIncludeAllImages(e.target.checked)} />
+                ISO 등 모든 항목 표시
+              </label>
+            </div>
             {images.length > 0 ? (
               <select value={newVm.image_id}
                 onChange={e => setNewVm(p => ({ ...p, image_id: e.target.value }))}
-                style={{ ...selectStyle, marginBottom: '1.25rem' }} required>
+                style={{ ...selectStyle, marginBottom: '0.5rem' }} required>
                 {images.map(img => (
-                  <option key={img.name} value={img.name}>
-                    {img.name}{img.size_gb > 0 ? ` (${img.size_gb} GB)` : ''}
+                  <option key={img.library_path} value={img.library_path}>
+                    [{img.type.toUpperCase()}] {img.name}{img.size_gb > 0 ? ` (${img.size_gb} GB)` : ''}
                   </option>
                 ))}
               </select>
             ) : (
               <div style={{ ...errorBoxStyle, background: '#fef3c7', color: '#92400e' }}>
-                Content Library에 이미지가 없습니다. 관리자에게 문의하세요.
+                {includeAllImages
+                  ? 'Content Library에 이미지가 없습니다. 관리자에게 문의하세요.'
+                  : 'OVA/OVF 항목이 없습니다. ISO도 표시하려면 위 체크박스를 켜세요.'}
               </div>
             )}
+            {newVm.image_id && (() => {
+              const sel = images.find(i => i.library_path === newVm.image_id);
+              if (sel && sel.type !== 'ova' && sel.type !== 'ovf') {
+                return (
+                  <div style={{ fontSize: '0.78rem', color: '#92400e', background: '#fef3c7', padding: '0.4rem 0.6rem', borderRadius: '0.25rem', marginBottom: '1.25rem' }}>
+                    ⚠ {sel.type.toUpperCase()} 항목은 자동 배포가 지원되지 않습니다 — VM 생성 시 실패할 수 있습니다.
+                  </div>
+                );
+              }
+              return <div style={{ marginBottom: '0.75rem' }} />;
+            })()}
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
               <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={isCreating}>
