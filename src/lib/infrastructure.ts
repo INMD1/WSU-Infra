@@ -380,6 +380,7 @@ const govcStrategy = {
 
     lines.push('');
     lines.push('ssh_pwauth: true');
+    lines.push('disable_root: false');
 
     if (password) {
       lines.push('chpasswd:');
@@ -398,6 +399,21 @@ const govcStrategy = {
       lines.push('    - arches: [default]');
       lines.push(`      uri: ${mirror}`);
     }
+
+    // ssh 강제 활성화 + 게스트 방화벽 정리
+    // - sshd_config 의 PasswordAuthentication 을 명시적으로 yes 로 강제
+    //   (Ubuntu cloud 이미지는 /etc/ssh/sshd_config.d/ 의 별도 파일에서 no 로 덮어쓰는 경우가 있음)
+    // - ufw / iptables 가 활성화돼 있으면 비활성화 (학습 환경 단순화)
+    // - sshd 재시작으로 변경 반영
+    lines.push('');
+    lines.push('runcmd:');
+    lines.push('  - sed -i "s/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config');
+    lines.push('  - rm -f /etc/ssh/sshd_config.d/60-cloudimg-settings.conf /etc/ssh/sshd_config.d/50-cloud-init.conf');
+    lines.push('  - systemctl enable --now ssh || systemctl enable --now sshd || true');
+    lines.push('  - systemctl restart ssh || systemctl restart sshd || true');
+    lines.push('  - ufw disable || true');
+    lines.push('  - iptables -P INPUT ACCEPT || true');
+    lines.push('  - iptables -F || true');
 
     return lines.join('\n') + '\n';
   },
@@ -569,7 +585,25 @@ const govcStrategy = {
       // 7. Wait for IP
       console.log(`[govc] Waiting for IP address (timeout 5m)...`);
       const { stdout: ipStdout } = await execPromise(`govc vm.ip -wait=5m "${params.name}"`, { env });
-      const ipAddress = ipStdout.trim();
+      let ipAddress = ipStdout.trim();
+
+      // cloud-init 의 네트워크 재설정 / DHCP renewal 로 IP 가 한 번 바뀔 수 있어
+      // 잠깐 settle 대기 후 VMware Tools 의 Guest.Net 에서 최신 IP 재조회
+      await new Promise(r => setTimeout(r, 15000));
+      try {
+        const { stdout: guestStdout } = await execPromise(`govc vm.info -e -json "${params.name}"`, { env });
+        const guestInfo = JSON.parse(guestStdout);
+        const guestVm = guestInfo?.VirtualMachines?.[0] ?? guestInfo?.virtualMachines?.[0];
+        const nets: any[] = guestVm?.Guest?.Net ?? guestVm?.guest?.net ?? [];
+        const ips: string[] = nets.flatMap((n: any) => (n.IpAddress ?? n.ipAddress ?? []) as string[]);
+        const v4 = ips.find(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('169.254.'));
+        if (v4 && v4 !== ipAddress) {
+          console.log(`[govc] IP refreshed: ${ipAddress} → ${v4}`);
+          ipAddress = v4;
+        }
+      } catch (err) {
+        console.warn(`[govc] IP refresh skipped:`, (err as any)?.message ?? err);
+      }
 
       // 8. Info Retrieval (IP 받은 후 최종 확인 — moref/uuid 가 이른 단계에서 못 얻혔으면 여기서 보강)
       let vm_id = earlyVmId;
@@ -691,19 +725,37 @@ const govcStrategy = {
    */
   async getConsoleUrl(name: string): Promise<string> {
     const env = this.getEnv();
-    const { stdout } = await execPromise(`govc vm.console -h5 "${name}"`, { env });
-    const url = stdout.trim();
-    if (!url || !url.startsWith('http')) {
-      throw new Error(`Unexpected console URL output: ${stdout}`);
+    // PowerCLI 로 AcquireCloneTicket() 직접 호출 — govc -h5 가 ticket 없이 URL 만 돌려주는
+    // vCenter 환경(SSO redirect)을 회피
+    const vcenterHost = (env.GOVC_URL || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (!vcenterHost) throw new Error('GOVC_URL is not set');
+
+    const scriptPath = path.resolve(process.cwd(), 'scripts/vsphere/get-console-url.ps1');
+    const args = [
+      '-NoProfile', '-NonInteractive',
+      '-File', scriptPath,
+      '-VCenterServer', vcenterHost,
+      '-Username', env.GOVC_USERNAME,
+      '-VMName', name,
+    ];
+
+    try {
+      const { stdout, stderr } = await execFilePromise('pwsh', args, {
+        env: { ...process.env, VCENTER_PASSWORD: env.GOVC_PASSWORD },
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      const url = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('https://')).pop();
+      if (!url) {
+        throw new Error(`Console URL 추출 실패. stdout=${stdout.slice(0, 500)} stderr=${stderr.slice(0, 500)}`);
+      }
+      console.log(`[pwsh] Console URL for ${name}: ${url}`);
+      return url;
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        throw new Error('pwsh 실행 파일을 찾을 수 없습니다. PowerShell + VMware.PowerCLI 가 설치돼 있어야 합니다.');
+      }
+      throw err;
     }
-    // sessionTicket 포함 여부 로그 — 미포함이면 vCenter 가 로그인 페이지로 redirect 함
-    const hasTicket = /sessionTicket=|ticket=/.test(url);
-    console.log(`[govc] Console URL for ${name}: ${url}`);
-    if (!hasTicket) {
-      console.warn(`[govc] Console URL has no sessionTicket — vCenter may require login. ` +
-        `Check that the user "${env.GOVC_USERNAME}" has "Sessions.AcquireCloneTicket" / "Sessions.ValidateSession" permissions.`);
-    }
-    return url;
   },
 
   /**
@@ -1073,7 +1125,14 @@ export const pfsenseClient = {
   },
 
   async applyFirewall(): Promise<void> {
-    await this.fetchWithTls(`${this.getUrl()}/api/v2/firewall/apply`, { method: 'POST', body: '{}' });
+    const res = await this.fetchWithTls(`${this.getUrl()}/api/v2/firewall/apply`, { method: 'POST', body: '{}' });
+    const text = await res.text();
+    console.log(`[pfSense] firewall apply: status=${res.status}, body=${text.slice(0, 400)}`);
+    let json: any = null;
+    try { json = JSON.parse(text); } catch {}
+    if (json && json.code !== 200) {
+      console.warn(`[pfSense] firewall apply non-200: code=${json.code}, message=${json.message}`);
+    }
   },
 
   async addPortForward(params: PortForwardParams): Promise<PortForwardResult> {
