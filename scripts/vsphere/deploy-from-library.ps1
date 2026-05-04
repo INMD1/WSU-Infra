@@ -44,6 +44,22 @@ try {
     $target = Get-Datastore -Name $DatastoreName -ErrorAction Stop
   }
 
+  # 네트워크가 주어졌으면 그 PG 가 실제로 존재하는 호스트로만 deploy 후보 제한.
+  # (예: Internal-VNIC 는 vSwitch2 에만 있는데 클러스터의 모든 호스트가 vSwitch2 를
+  #  갖지는 않을 때 SDRS 가 잘못된 호스트로 떨어뜨려 NIC 할당이 실패하는 문제 해결)
+  $networkHosts = $null
+  if ($NetworkName) {
+    $networkHosts = Get-VirtualPortGroup -Name $NetworkName -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.VMHost } | Sort-Object -Property Name -Unique
+    if (-not $networkHosts) {
+      # VDS 또는 opaque 인 경우는 모든 호스트에서 사용 가능하다고 가정 (보통 그러함)
+      $vds = Get-VDPortgroup -Name $NetworkName -ErrorAction SilentlyContinue
+      if (-not $vds) {
+        Write-Warning ("Could not pre-resolve hosts for network '{0}' — relying on PowerCLI defaults" -f $NetworkName)
+      }
+    }
+  }
+
   $params = @{
     ContentLibraryItem = $item
     Name = $VMName
@@ -52,15 +68,29 @@ try {
   if ($ResourcePoolName) {
     $params.ResourcePool = Get-ResourcePool -Name $ResourcePoolName -ErrorAction Stop
   }
+
+  # VMHost 결정: 사용자 지정 우선, 단 그 호스트가 네트워크를 못 보면 무시
+  $resolvedHost = $null
   if ($VMHostName) {
-    $params.VMHost = Get-VMHost -Name $VMHostName -ErrorAction Stop
+    $resolvedHost = Get-VMHost -Name $VMHostName -ErrorAction SilentlyContinue
+    if ($networkHosts -and $resolvedHost -and -not ($networkHosts.Name -contains $resolvedHost.Name)) {
+      Write-Warning ("Requested VMHost '{0}' does not have network '{1}' — overriding" -f $VMHostName, $NetworkName)
+      $resolvedHost = $null
+    }
+  }
+  if (-not $resolvedHost -and $networkHosts) {
+    # 네트워크 보유 호스트 중 메모리 여유가 가장 큰 곳 선택
+    $resolvedHost = $networkHosts | Sort-Object -Property @{Expression={ $_.MemoryTotalGB - $_.MemoryUsageGB }; Descending=$true} | Select-Object -First 1
+  }
+  if ($resolvedHost) {
+    $params.VMHost = $resolvedHost
+    Write-Output ("Selected VMHost: {0}" -f $resolvedHost.Name)
   }
   if ($FolderName) {
     $params.Location = Get-Folder -Name $FolderName -Type VM -ErrorAction Stop
   }
 
-  # New-VM 은 ResourcePool / VMHost 중 하나가 필수.
-  # 둘 다 안 들어왔으면 첫 번째 클러스터의 루트 풀(Resources) 자동 선택.
+  # New-VM 은 ResourcePool / VMHost 중 하나가 필수. 둘 다 없으면 폴백.
   if (-not $params.ContainsKey('ResourcePool') -and -not $params.ContainsKey('VMHost')) {
     $cluster = Get-Cluster -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($cluster) {
