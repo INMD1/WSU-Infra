@@ -114,6 +114,53 @@ const govcStrategy = {
     return candidates[0].name;
   },
 
+  /**
+   * 입력이 StoragePod(Datastore Cluster)이면 여유 공간이 가장 많은 멤버 데이터스토어 이름 반환.
+   * 일반 데이터스토어이면 입력값 그대로 반환.
+   * library.deploy 처럼 SDRS 자동 배치를 신뢰할 수 없는 명령에 사용.
+   */
+  async resolveDatastoreForDeploy(name: string): Promise<string> {
+    const env = this.getEnv();
+    const dcRaw = (env.GOVC_DATACENTER || '/').replace(/^\/+|\/+$/g, '');
+    const dcName = dcRaw.split('/')[0] || '';
+
+    // 멤버 inventory 경로 조회. 단일 DS면 govc ls 가 빈 결과 또는 실패.
+    let memberPaths: string[] = [];
+    try {
+      const podPath = dcName
+        ? `/${dcName}/datastore/${name}`
+        : `datastore/${name}`;
+      const { stdout } = await execPromise(`govc ls "${podPath}"`, { env });
+      memberPaths = stdout.trim().split('\n').filter(Boolean);
+    } catch {
+      return name;
+    }
+
+    if (memberPaths.length === 0) return name;
+
+    let best: { name: string; free: number } | null = null;
+    for (const path of memberPaths) {
+      try {
+        const { stdout } = await execPromise(`govc datastore.info -json "${path}"`, { env });
+        const data = JSON.parse(stdout);
+        const ds = data?.Datastores?.[0];
+        if (!ds) continue;
+        const free = Number(ds.Info?.FreeSpace ?? 0);
+        const memberName = ds.Info?.Name ?? path.split('/').pop() ?? '';
+        if (!memberName) continue;
+        if (!best || free > best.free) best = { name: memberName, free };
+      } catch {
+        // 일시 오류는 건너뛰고 다른 멤버 시도
+      }
+    }
+
+    if (best) {
+      console.log(`[govc] Resolved StoragePod "${name}" → member "${best.name}" (${(best.free / (1024 ** 3)).toFixed(2)}GB free)`);
+      return best.name;
+    }
+    return name;
+  },
+
   async listDatastores(): Promise<DatastoreInfo[]> {
     const env = this.getEnv();
 
@@ -407,9 +454,12 @@ const govcStrategy = {
       // - "*.ova" / "*.ovf" → CLOUD_IMAGE_DATASTORE 의 OVA 파일 → import 후 clone (legacy)
       // - 그 외 → 기존 템플릿 VM 이름 → vm.clone
       if (params.template.startsWith('/')) {
-        console.log(`[govc] Deploying library item "${params.template}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${datastore}`);
+        // library.deploy 는 StoragePod 의 SDRS 자동 배치를 신뢰할 수 없으므로
+        // 멤버 데이터스토어 중 가장 여유 있는 곳으로 미리 해석
+        const deployDs = await this.resolveDatastoreForDeploy(datastore);
+        console.log(`[govc] Deploying library item "${params.template}" → "${params.name}" on host=${targetHost || 'auto'}, ds=${deployDs}`);
         await execPromise(
-          `govc library.deploy -ds="${datastore}" ${hostFlag} ${poolFlag} ${folderFlag} "${params.template}" "${params.name}"`,
+          `govc library.deploy -ds="${deployDs}" ${hostFlag} ${poolFlag} ${folderFlag} "${params.template}" "${params.name}"`,
           { env }
         );
       } else {
