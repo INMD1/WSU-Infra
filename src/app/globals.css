@@ -1,94 +1,191 @@
-:root {
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --bg: #f8fafc;
-  --card-bg: #ffffff;
-  --text: #1e293b;
-  --text-muted: #64748b;
-  --border: #e2e8f0;
-  --success: #22c55e;
-  --error: #ef4444;
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap');
+
+@theme {
+  /* Brand & Accent */
+  --color-primary: #cc785c;
+  --color-primary-active: #a9583e;
+  --color-primary-disabled: #e6dfd8;
+  --color-accent-teal: #5db8a6;
+  --color-accent-amber: #e8a55a;
+  /* Surface */
+  --color-canvas: #faf9f5;
+  --color-surface-soft: #f5f0e8;
+  --color-surface-card: #efe9de;
+  --color-surface-cream-strong: #e8e0d2;
+  --color-surface-dark: #181715;
+  --color-surface-dark-elevated: #252320;
+  --color-surface-dark-soft: #1f1e1b;
+  --color-hairline: #e6dfd8;
+  --color-hairline-soft: #ebe6df;
+  /* Text */
+  --color-ink: #141413;
+  --color-body-strong: #252523;
+  --color-body: #3d3d3a;
+  --color-muted: #6c6a64;
+  --color-muted-soft: #8e8b82;
+  --color-on-primary: #ffffff;
+  --color-on-dark: #faf9f5;
+  --color-on-dark-soft: #a09d96;
+  /* Semantic */
+  --color-success: #5db872;
+  --color-warning: #d4a017;
+  --color-error: #c64545;
+  /* Typography */
+  --font-display: 'Cormorant Garamond', 'Tiempos Headline', 'Georgia', serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  /* Spacing */
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+  --spacing-section: 96px;
+  /* Border Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@layer base {
+  * {
+    @apply box-border;
+  }
+  html {
+    font-size: 16px;
+  }
+  body {
+    @apply bg-canvas text-body font-sans antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-normal tracking-tight;
+  }
 }
 
-body {
-  background-color: var(--bg);
-  color: var(--text);
-  font-family: sans-serif;
-  line-height: 1.5;
+@layer utilities {
+  /* Typography Utilities */
+  .display-lg {
+    @apply text-4xl font-medium;
+  }
+
+  .display-md {
+    @apply text-3xl font-medium;
+  }
+
+  .title-lg {
+    @apply text-2xl font-medium;
+  }
+
+  .title-md {
+    @apply text-xl font-medium;
+  }
+
+  .title-sm {
+    @apply text-lg font-medium;
+  }
+
+  .body-lg {
+    @apply text-base;
+  }
+
+  .body-md {
+    @apply text-sm;
+  }
+
+  .body-sm {
+    @apply text-xs;
+  }
+
+  .caption {
+    @apply text-xs uppercase tracking-wider;
+  }
+
+  .label-sm {
+    @apply text-[10px] uppercase tracking-wider;
+  }
 }
 
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem;
-}
+@layer components {
+  /* Container */
+  .container {
+    @apply max-w-6xl mx-auto px-6 py-6;
+  }
 
-button {
-  cursor: pointer;
-  padding: 0.5rem 1rem;
-  border-radius: 0.375rem;
-  border: none;
-  font-weight: 500;
-  transition: all 0.2s;
-}
+  /* Cards */
+  .card {
+    @apply bg-surface-card rounded-lg p-8 mb-6;
+  }
 
-.btn-primary {
-  background-color: var(--primary);
-  color: white;
-}
+  .card-dark {
+    @apply bg-surface-dark text-on-dark rounded-lg p-8 mb-6;
+  }
 
-.btn-primary:hover {
-  background-color: var(--primary-hover);
-}
+  /* Buttons */
+  .btn-primary {
+    @apply bg-primary text-on-primary px-5 py-2.5 rounded-md hover:bg-primary-active transition-colors font-medium text-sm h-10;
+  }
 
-input {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  margin-bottom: 1rem;
-}
+  .btn-secondary {
+    @apply bg-canvas text-ink px-5 py-2.5 rounded-md hover:bg-surface-soft transition-colors font-medium text-sm h-10 border border-hairline;
+  }
 
-.card {
-  background: var(--card-bg);
-  border-radius: 0.5rem;
-  padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  margin-bottom: 1.5rem;
-}
+  .btn-secondary-dark {
+    @apply bg-surface-dark-elevated text-on-dark px-5 py-2.5 rounded-md hover:bg-surface-dark-soft transition-colors font-medium text-sm h-10;
+  }
 
-.progress-bar {
-  height: 0.5rem;
-  background: var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-  margin: 0.5rem 0;
-}
+  .btn-icon {
+    @apply w-9 h-9 rounded-full bg-canvas border border-hairline flex items-center justify-center text-ink;
+  }
 
-.progress-fill {
-  height: 100%;
-  background: var(--primary);
-  transition: width 0.3s ease;
-}
+  /* Inputs */
+  .input {
+    @apply w-full px-3.5 py-2.5 bg-canvas text-ink border border-hairline rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-15 focus:border-primary h-10;
+  }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
+  .input-dark {
+    @apply w-full px-3.5 py-2.5 bg-surface-dark-soft text-on-dark border border-surface-dark-elevated rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-15 focus:border-primary h-10;
+  }
 
-th, td {
-  padding: 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
+  /* Progress Bar */
+  .progress-bar {
+    @apply h-1 bg-hairline rounded-full overflow-hidden my-2;
+  }
 
-th {
-  color: var(--text-muted);
-  font-weight: 600;
+  .progress-fill {
+    @apply h-full bg-primary transition-all duration-300;
+  }
+
+  /* Tables */
+  table {
+    @apply w-full;
+  }
+
+  th {
+    @apply px-3 py-3 text-left text-muted font-medium text-xs uppercase tracking-wide;
+  }
+
+  td {
+    @apply px-3 py-3 text-left border-b border-hairline text-sm;
+  }
+
+  /* Badges */
+  .badge {
+    @apply bg-surface-card text-ink text-xs font-medium px-3 py-1 rounded-full;
+  }
+
+  .badge-primary {
+    @apply bg-primary text-on-primary text-xs font-medium px-3 py-1 rounded-full tracking-wide;
+  }
+
+  /* Links */
+  .text-link {
+    @apply text-primary hover:underline;
+  }
 }

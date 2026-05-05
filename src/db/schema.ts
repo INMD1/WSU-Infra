@@ -46,7 +46,7 @@ export const quotas = mysqlTable('quotas', {
   owner_id: varchar('owner_id', { length: 36 }).primaryKey(),
   max_vm_count: int('max_vm_count').default(5).notNull(),
   max_vcpu_total: int('max_vcpu_total').default(3).notNull(),
-  max_ram_gb_total: int('max_ram_gb_total').default(4).notNull(),
+  max_ram_gb_total: int('max_ram_gb_total').default(8).notNull(),
   max_disk_gb_total: int('max_disk_gb_total').default(100).notNull(),
   max_public_ports: int('max_public_ports').default(10).notNull(),
   max_snapshots_per_vm: int('max_snapshots_per_vm').default(3).notNull(),

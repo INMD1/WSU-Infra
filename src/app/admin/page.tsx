@@ -100,13 +100,13 @@ export default function AdminPage() {
 
   return (
     <div className="container">
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-        <h1>관리자 패널</h1>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+      <header className="flex justify-between items-center mb-8">
+        <h1 className="text-2xl font-bold">관리자 패널</h1>
+        <div className="flex gap-4">
           <button className="btn-secondary" onClick={() => router.push('/dashboard')}>대시보드</button>
           <button
             onClick={handleLogout}
-            style={{ background: 'none', border: '1px solid var(--border)', padding: '0.5rem 1rem', borderRadius: '0.375rem', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem' }}
+            className="bg-transparent border border-border px-4 py-2 rounded-md text-text-muted text-sm hover:bg-border transition-colors"
           >
             로그아웃
           </button>
@@ -114,17 +114,17 @@ export default function AdminPage() {
       </header>
 
       <section className="card">
-        <h2 style={{ marginBottom: '1rem' }}>학번 등록</h2>
-        <form onSubmit={handleAdd} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', marginBottom: '0.5rem' }}>학번</label>
+        <h2 className="text-lg font-semibold mb-4">학번 등록</h2>
+        <form onSubmit={handleAdd} className="flex gap-4 items-end">
+          <div className="flex-1">
+            <label className="block mb-2 text-sm">학번</label>
             <input
               type="text"
               value={newStudentId}
               onChange={e => setNewStudentId(e.target.value)}
               placeholder="예: 20240001"
+              className="input"
               required
-              style={{ marginBottom: 0 }}
             />
           </div>
           <button type="submit" className="btn-primary" disabled={adding} style={{ whiteSpace: 'nowrap' }}>
@@ -133,21 +133,21 @@ export default function AdminPage() {
         </form>
 
         {error && (
-          <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#fee2e2', color: '#991b1b', borderRadius: '0.5rem' }}>
+          <div className="mt-4 p-3 bg-red-100 text-red-800 rounded-md text-sm">
             {error}
           </div>
         )}
         {success && (
-          <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#dcfce7', color: '#166534', borderRadius: '0.5rem' }}>
+          <div className="mt-4 p-3 bg-green-100 text-green-800 rounded-md text-sm">
             {success}
           </div>
         )}
       </section>
 
       <section className="card">
-        <h2 style={{ marginBottom: '1rem' }}>등록된 학생 ({students.length}명)</h2>
+        <h2 className="text-lg font-semibold mb-4">등록된 학생 ({students.length}명)</h2>
         {loading ? (
-          <p style={{ color: 'var(--text-muted)' }}>로딩 중...</p>
+          <p className="text-text-muted">로딩 중...</p>
         ) : (
           <table>
             <thead>
@@ -160,19 +160,19 @@ export default function AdminPage() {
             <tbody>
               {students.length === 0 ? (
                 <tr>
-                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={3} className="text-center text-text-muted py-4">
                     등록된 학생이 없습니다.
                   </td>
                 </tr>
               ) : (
                 students.map(s => (
                   <tr key={s.id}>
-                    <td style={{ fontFamily: 'monospace', fontWeight: 500 }}>{s.username}</td>
+                    <td className="font-mono font-medium">{s.username}</td>
                     <td>{new Date(s.created_at).toLocaleDateString()}</td>
                     <td>
                       <button
                         onClick={() => handleDelete(s.id, s.username)}
-                        style={{ background: '#fee2e2', color: '#991b1b', border: 'none', borderRadius: '0.25rem', padding: '0.25rem 0.75rem', cursor: 'pointer', fontSize: '0.85rem' }}
+                        className="bg-red-100 text-red-800 border-none rounded px-3 py-1 cursor-pointer text-sm hover:bg-red-200 transition-colors"
                       >
                         삭제
                       </button>
