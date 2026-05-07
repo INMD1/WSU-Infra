@@ -27,18 +27,18 @@ export function AppSidebar({ userdata }: UserProfileProps) {
         <SidebarGroup />
         <SidebarGroup />
       </SidebarContent>
-      <SidebarFooter className="border-t border-gray-200">
+      <SidebarFooter className="border-t border-hairline">
         <div className="grid grid-cols-1 items-center">
           <div className="flex items-center gap-3">
-            <Avatar className="h-12 w-12">
-              <AvatarFallback className="bg-gray-200 text-black font-semibold">
+            <Avatar className="h-10 w-10">
+              <AvatarFallback className="bg-primary text-on-primary font-semibold text-sm">
                 W
               </AvatarFallback>
             </Avatar>
 
             <div>
-              <p className="text-[0.8em] text-gray-400">{userdata}</p>
-              <p className="text-gray-400 text-[0.8em]">우송대학교 클라우드 인프라</p>
+              <p className="text-sm font-medium text-ink">{userdata}</p>
+              <p className="text-muted-soft text-xs">우송대학교 클라우드 인프라</p>
             </div>
           </div>
         </div>

@@ -144,6 +144,45 @@ pfSense-API **v2** 기준:
 - Cloud-init ISO 방식은 `genisoimage` 패키지 필요 (`injectCloudInitViaExtraConfig`로 대체 가능)
 - jobQueue는 프로세스 내 메모리 저장 → 서버 재시작 시 pending 상태 jobs 소실
 
+## 디자인 시스템 (Claude 스타일)
+
+전체 UI는 `DESIGN.md` 기반 Claude 디자인 시스템을 따른다. GCP 스타일 클래스는 제거됨.
+
+### 색상 토큰 (CSS 변수, Tailwind 유틸리티로 사용)
+| 역할 | 클래스 | 값 |
+|------|--------|-----|
+| 배경(캔버스) | `bg-canvas` | #faf9f5 크림색 |
+| 카드 배경 | `bg-surface-card` | #efe9de |
+| 구분선 | `border-hairline` | #e6dfd8 |
+| 주요 텍스트 | `text-ink` | #141413 |
+| 보조 텍스트 | `text-muted` | #6c6a64 |
+| 강조(코랄) | `bg-primary`, `text-primary` | #cc785c |
+| 다크 서피스 | `bg-surface-dark` | #181715 |
+
+### 컴포넌트 클래스 (globals.css 정의)
+| 클래스 | 용도 |
+|--------|------|
+| `.btn-primary` | 주 CTA 버튼 (코랄) |
+| `.btn-secondary` | 보조 버튼 (캔버스+테두리) |
+| `.btn-ghost` | 텍스트형 버튼 |
+| `.input` | 텍스트 입력 필드 |
+| `.card` | 카드 컨테이너 (surface-card 배경) |
+| `.progress-bar` / `.progress-fill` | 진행 바 |
+| `.status-badge .status-running/stopped/pending/error` | VM 상태 배지 |
+| `.alert-error/success/warning` | 피드백 알림 박스 |
+| `.display-xl/lg/md/sm` | 헤딩 (Cormorant Garamond serif) |
+| `.title-lg/md/sm` | 소제목 (Inter, weight 500) |
+
+### 폰트
+- **헤딩**: Cormorant Garamond (serif, weight 400, 네거티브 트래킹) — `font-display`
+- **본문/UI**: Inter — `font-sans`
+- **코드**: JetBrains Mono — `font-mono`
+
+### 금지 사항
+- `.card-gcp`, `.btn-gcp-*`, `.table-gcp`, `.progress-gcp*`, `.badge-gcp`, `.status-*-gcp` 클래스 사용 금지
+- 하드코딩된 GCP 색상(`#202124`, `#5f6368`, `#1a73e8` 등) 사용 금지
+- `style={{ color: '...' }}` 인라인 스타일 대신 Tailwind 토큰 클래스 사용
+
 ## 작업이 마무리 된후
 만약 사용자가 종료 라고 입력은 한경우 오늘 이 세션에서 작업한 내용을
 초중급 개발자가 이해하기 쉽게 정리를 해서 Update_Markdown 폴더에 새로운 파일로 MM-DD_HH:MM.md으로 저장해야함.

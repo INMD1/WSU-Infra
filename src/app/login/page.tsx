@@ -45,16 +45,16 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg">
-      <div className="card" style={{ width: '400px' }}>
-        <h2 className="text-xl font-bold text-center mb-2">WSU 클라우드 포털</h2>
-        <p className="text-center text-text-muted mb-6 text-sm">
+    <div className="min-h-screen flex items-center justify-center bg-canvas">
+      <div className="bg-surface-card rounded-xl p-10 w-full max-w-sm border border-hairline">
+        <h2 className="display-sm text-ink text-center mb-1">WSU 클라우드 포털</h2>
+        <p className="text-center text-muted mb-8 text-sm">
           {isAdminMode ? '관리자 로그인' : '학번으로 로그인하세요'}
         </p>
 
         <form onSubmit={handleLogin}>
           <div className="mb-4">
-            <label className="block mb-2 text-sm">{isAdminMode ? '관리자 ID' : '학번'}</label>
+            <label className="block mb-1.5 text-sm font-medium text-body-strong">{isAdminMode ? '관리자 ID' : '학번'}</label>
             <input
               type="text"
               value={studentId}
@@ -68,7 +68,7 @@ export default function LoginPage() {
 
           {isAdminMode && (
             <div className="mb-4">
-              <label className="block mb-2 text-sm">비밀번호</label>
+              <label className="block mb-1.5 text-sm font-medium text-body-strong">비밀번호</label>
               <input
                 type="password"
                 value={password}
@@ -81,7 +81,7 @@ export default function LoginPage() {
           )}
 
           {error && (
-            <p className="text-error mb-4 text-sm">{error}</p>
+            <div className="alert-error mb-4">{error}</div>
           )}
 
           <button type="submit" className="btn-primary w-full" disabled={loading}>
@@ -93,7 +93,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => { setIsAdminMode(!isAdminMode); setError(''); setPassword(''); }}
-            className="bg-transparent border-none text-text-muted cursor-pointer text-sm underline hover:text-primary transition-colors"
+            className="bg-transparent border-none text-muted cursor-pointer text-sm hover:text-primary transition-colors"
           >
             {isAdminMode ? '학생 로그인으로 돌아가기' : '관리자 로그인'}
           </button>

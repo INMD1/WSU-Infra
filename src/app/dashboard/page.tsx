@@ -32,31 +32,31 @@ export default function DashboardPage() {
     setuserdata(dash.username);
   }, [dash.username]);
 
-  if (dash.loading && !dash.quotas) return <div className="container">로딩 중...</div>;
+  if (dash.loading && !dash.quotas) return <div className="container text-muted">로딩 중...</div>;
 
   return (
-    <div className="min-h-screen w-full gcp-bg">
+    <div className="min-h-screen w-full bg-canvas">
       <SidebarProvider>
         <AppSidebar userdata={userdata} />
         <main className="w-full">
           <SidebarTrigger className="ml-4 mt-4" />
 
           {/* ── 헤더 ── */}
-          <header className="w-full px-8 py-8">
+          <header className="w-full px-8 py-8 border-b border-hairline">
             <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-6">
               <div>
-                <h1 className="text-4xl font-medium mb-1" style={{ color: '#202124' }}>클라우드 대시보드</h1>
-                <p className="text-xs uppercase tracking-wider" style={{ color: '#5f6368' }}>학번: {dash.username}</p>
+                <h1 className="display-md text-ink mb-1">클라우드 대시보드</h1>
+                <p className="caption-uppercase text-muted">학번: {dash.username}</p>
               </div>
               <div className="flex flex-wrap gap-3 items-center">
                 {dash.createResult && (
-                  <button className="btn-gcp-secondary" onClick={() => dash.setShowJobsModal(true)}>대기열 보기</button>
+                  <button className="btn-secondary" onClick={() => dash.setShowJobsModal(true)}>대기열 보기</button>
                 )}
                 {dash.role === 'admin' && (
-                  <button className="btn-gcp-secondary" onClick={() => router.push('/admin')}>관리자 패널</button>
+                  <button className="btn-secondary" onClick={() => router.push('/admin')}>관리자 패널</button>
                 )}
-                <button className="btn-gcp-primary" onClick={() => dash.setShowCreateModal(true)}>새 VM 생성</button>
-                <button className="btn-gcp-text" onClick={dash.handleLogout}>로그아웃</button>
+                <button className="btn-primary" onClick={() => dash.setShowCreateModal(true)}>새 VM 생성</button>
+                <button className="btn-ghost" onClick={dash.handleLogout}>로그아웃</button>
               </div>
             </div>
           </header>

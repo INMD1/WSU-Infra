@@ -1,11 +1,8 @@
 import './globals.css';
-import { Inter, Geist } from 'next/font/google';
-import { cn } from "@/lib/utils";
+import { Inter } from 'next/font/google';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 
-const geist = Geist({ subsets: ['latin'], variable: '--font-sans' });
-
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata = {
   title: 'WSU Cloud Dashboard',
@@ -18,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ko" className={cn('font-sans', geist.variable)} suppressHydrationWarning>
+    <html lang="ko" className={inter.variable} suppressHydrationWarning>
       <body className={inter.className}>
         <ThemeProvider>{children}</ThemeProvider>
       </body>

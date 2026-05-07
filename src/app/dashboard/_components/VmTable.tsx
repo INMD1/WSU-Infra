@@ -1,6 +1,3 @@
-// VM 목록 테이블 전체를 렌더링합니다.
-// 각 행은 VmTableRow 컴포넌트로 분리되어 있습니다.
-
 import type { Vm } from '@/types/dashboard';
 import { OSIcon } from '@/components/OSIcon';
 import { StatusBadge } from './StatusBadge';
@@ -25,14 +22,14 @@ export function VmTable({
 }: VmTableProps) {
   return (
     <section className="w-full px-8 pb-8">
-      <div className="card-gcp">
-        <div className="p-6 border-b" style={{ borderColor: '#dadce0' }}>
-          <h2 className="text-2xl font-medium" style={{ color: '#202124' }}>가상 머신 목록</h2>
+      <div className="bg-surface-card rounded-lg border border-hairline overflow-hidden mb-6">
+        <div className="px-6 py-5 border-b border-hairline">
+          <h2 className="title-lg text-ink">가상 머신 목록</h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="table-gcp">
+          <table>
             <thead>
-              <tr>
+              <tr className="bg-canvas">
                 <th className="w-12"></th>
                 <th>이름</th>
                 <th>상태</th>
@@ -47,7 +44,7 @@ export function VmTable({
             <tbody>
               {vms.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-12" style={{ color: '#5f6368' }}>
+                  <td colSpan={9} className="text-center py-12 text-muted">
                     생성된 VM이 없습니다.
                   </td>
                 </tr>
@@ -73,7 +70,6 @@ export function VmTable({
   );
 }
 
-// ── VM 테이블 단일 행 ─────────────────────────
 interface VmTableRowProps {
   vm: Vm;
   isActing: boolean;
@@ -98,11 +94,11 @@ function VmTableRow({
     <tr>
       <td><OSIcon imageName={vm.name} size="sm" /></td>
 
-      <td className="font-medium" style={{ color: '#202124' }}>{vm.name}</td>
+      <td className="font-medium text-ink">{vm.name}</td>
 
       <td><StatusBadge status={vm.status} /></td>
 
-      <td className="text-sm">
+      <td>
         <div className="flex items-center gap-2">
           <SpecLabel label="vCPU" value={String(vm.vcpu)} />
           <Sep />
@@ -121,7 +117,7 @@ function VmTableRow({
       <td>
         <button
           onClick={onOpenPortForward}
-          className="btn-gcp-secondary"
+          className="btn-secondary"
           disabled={!vm.internal_ip}
           title={!vm.internal_ip ? 'VM IP가 할당된 후 사용 가능합니다' : ''}
         >
@@ -132,7 +128,7 @@ function VmTableRow({
       <td>
         <button
           onClick={onOpenConsole}
-          className="btn-gcp-secondary"
+          className="btn-secondary"
           disabled={!isPowered}
           title={!isPowered ? 'VM이 실행 중일 때만 콘솔에 연결할 수 있습니다' : '새 탭에서 콘솔 열기'}
         >
@@ -142,26 +138,26 @@ function VmTableRow({
 
       <td>
         <div className="flex gap-1 flex-wrap">
-          <button onClick={() => onVmAction('start')} className="btn-gcp-text"
+          <button onClick={() => onVmAction('start')} className="btn-ghost"
             disabled={isActing || isPowered || isStarting} title="VM 시작">▶</button>
-          <button onClick={() => onVmAction('stop')} className="btn-gcp-text"
+          <button onClick={() => onVmAction('stop')} className="btn-ghost"
             disabled={isActing || !isPowered} title="VM 정지 (강제 종료)">■</button>
-          <button onClick={() => onVmAction('restart')} className="btn-gcp-text"
+          <button onClick={() => onVmAction('restart')} className="btn-ghost"
             disabled={isActing || !isPowered} title="VM 재시작 (하드 리셋)">↻</button>
-          <button onClick={onOpenSpecModal} className="btn-gcp-text"
+          <button onClick={onOpenSpecModal} className="btn-ghost"
             disabled={isActing || isPowered || isStarting}
             title={isPowered || isStarting ? 'VM 정지 후 사양 변경 가능' : 'CPU/RAM 사양 변경'}>
             사양
           </button>
           <button onClick={onDeleteVm}
-            className="bg-surface-cream-strong text-ink border-none rounded-md px-2 py-1 text-sm cursor-pointer hover:bg-error/10 hover:text-error transition-colors disabled:opacity-50"
+            className="btn-ghost hover:bg-error/10 hover:text-error"
             disabled={isActing} title="VM 삭제 (디스크 포함)">
             ✕
           </button>
         </div>
       </td>
 
-      <td className="text-sm text-muted">{new Date(vm.created_at).toLocaleDateString()}</td>
+      <td className="text-muted">{new Date(vm.created_at).toLocaleDateString()}</td>
     </tr>
   );
 }
@@ -169,12 +165,12 @@ function VmTableRow({
 function SpecLabel({ label, value }: { label: string; value: string }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <span style={{ color: '#5f6368' }}>{label}</span>
-      <span className="font-medium">{value}</span>
+      <span className="text-muted">{label}</span>
+      <span className="font-medium text-ink">{value}</span>
     </span>
   );
 }
 
 function Sep() {
-  return <span style={{ color: '#5f6368' }}>|</span>;
+  return <span className="text-hairline">|</span>;
 }

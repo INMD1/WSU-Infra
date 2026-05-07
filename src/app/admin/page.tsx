@@ -99,91 +99,82 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="container">
-      <header className="flex justify-between items-center mb-8">
-        <h1 className="text-2xl font-bold">관리자 패널</h1>
-        <div className="flex gap-4">
-          <button className="btn-secondary" onClick={() => router.push('/dashboard')}>대시보드</button>
-          <button
-            onClick={handleLogout}
-            className="bg-transparent border border-border px-4 py-2 rounded-md text-text-muted text-sm hover:bg-border transition-colors"
-          >
-            로그아웃
-          </button>
-        </div>
-      </header>
-
-      <section className="card">
-        <h2 className="text-lg font-semibold mb-4">학번 등록</h2>
-        <form onSubmit={handleAdd} className="flex gap-4 items-end">
-          <div className="flex-1">
-            <label className="block mb-2 text-sm">학번</label>
-            <input
-              type="text"
-              value={newStudentId}
-              onChange={e => setNewStudentId(e.target.value)}
-              placeholder="예: 20240001"
-              className="input"
-              required
-            />
+    <div className="min-h-screen bg-canvas">
+      <div className="container">
+        <header className="flex justify-between items-center mb-8 pt-2">
+          <h1 className="display-sm text-ink">관리자 패널</h1>
+          <div className="flex gap-3">
+            <button className="btn-secondary" onClick={() => router.push('/dashboard')}>대시보드</button>
+            <button onClick={handleLogout} className="btn-ghost">
+              로그아웃
+            </button>
           </div>
-          <button type="submit" className="btn-primary" disabled={adding} style={{ whiteSpace: 'nowrap' }}>
-            {adding ? '등록 중...' : '학번 추가'}
-          </button>
-        </form>
+        </header>
 
-        {error && (
-          <div className="mt-4 p-3 bg-red-100 text-red-800 rounded-md text-sm">
-            {error}
-          </div>
-        )}
-        {success && (
-          <div className="mt-4 p-3 bg-green-100 text-green-800 rounded-md text-sm">
-            {success}
-          </div>
-        )}
-      </section>
+        <section className="card">
+          <h2 className="title-md text-ink mb-4">학번 등록</h2>
+          <form onSubmit={handleAdd} className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block mb-1.5 text-sm font-medium text-body-strong">학번</label>
+              <input
+                type="text"
+                value={newStudentId}
+                onChange={e => setNewStudentId(e.target.value)}
+                placeholder="예: 20240001"
+                className="input"
+                required
+              />
+            </div>
+            <button type="submit" className="btn-primary" disabled={adding} style={{ whiteSpace: 'nowrap' }}>
+              {adding ? '등록 중...' : '학번 추가'}
+            </button>
+          </form>
 
-      <section className="card">
-        <h2 className="text-lg font-semibold mb-4">등록된 학생 ({students.length}명)</h2>
-        {loading ? (
-          <p className="text-text-muted">로딩 중...</p>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>학번</th>
-                <th>등록일</th>
-                <th style={{ width: '100px' }}>관리</th>
-              </tr>
-            </thead>
-            <tbody>
-              {students.length === 0 ? (
+          {error && <div className="mt-4 alert-error">{error}</div>}
+          {success && <div className="mt-4 alert-success">{success}</div>}
+        </section>
+
+        <section className="card">
+          <h2 className="title-md text-ink mb-4">등록된 학생 ({students.length}명)</h2>
+          {loading ? (
+            <p className="text-muted">로딩 중...</p>
+          ) : (
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={3} className="text-center text-text-muted py-4">
-                    등록된 학생이 없습니다.
-                  </td>
+                  <th>학번</th>
+                  <th>등록일</th>
+                  <th style={{ width: '100px' }}>관리</th>
                 </tr>
-              ) : (
-                students.map(s => (
-                  <tr key={s.id}>
-                    <td className="font-mono font-medium">{s.username}</td>
-                    <td>{new Date(s.created_at).toLocaleDateString()}</td>
-                    <td>
-                      <button
-                        onClick={() => handleDelete(s.id, s.username)}
-                        className="bg-red-100 text-red-800 border-none rounded px-3 py-1 cursor-pointer text-sm hover:bg-red-200 transition-colors"
-                      >
-                        삭제
-                      </button>
+              </thead>
+              <tbody>
+                {students.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="text-center text-muted py-4">
+                      등록된 학생이 없습니다.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        )}
-      </section>
+                ) : (
+                  students.map(s => (
+                    <tr key={s.id}>
+                      <td className="font-mono font-medium text-ink">{s.username}</td>
+                      <td className="text-muted">{new Date(s.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <button
+                          onClick={() => handleDelete(s.id, s.username)}
+                          className="btn-ghost text-error hover:bg-error/10 hover:text-error px-3 py-1 text-sm"
+                        >
+                          삭제
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
