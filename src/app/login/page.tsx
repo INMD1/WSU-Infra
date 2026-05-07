@@ -46,7 +46,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-canvas">
-      <div className="bg-surface-card rounded-xl p-10 w-full max-w-sm border border-hairline">
+      <div className="bg-surface-card rounded-xl p-10 border border-hairline">
         <h2 className="display-sm text-ink text-center mb-1">WSU 클라우드 포털</h2>
         <p className="text-center text-muted mb-8 text-sm">
           {isAdminMode ? '관리자 로그인' : '학번으로 로그인하세요'}

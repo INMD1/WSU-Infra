@@ -39,7 +39,8 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/port-forwards
- * Body: { internal_ip, internal_port, external_port?, protocol?, vm_id?, owner_id?, description? }
+ * Body: { vm_id, internal_port, external_port?, protocol?, description? }
+ * vm_id 가 있으면 자동으로 VM 의 internal_ip 를 조회
  */
 export async function POST(request: Request) {
   const auth = requireAuth(request);
@@ -47,19 +48,32 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { internal_ip, internal_port, external_port, protocol, vm_id, owner_id, description } = body;
+    const { vm_id, internal_port, external_port, protocol, description } = body;
 
-    if (!internal_ip || internal_port === undefined) {
+    if (!vm_id || internal_port === undefined) {
       return NextResponse.json(
-        { success: false, message: 'internal_ip and internal_port are required' },
+        { success: false, message: 'vm_id and internal_port are required' },
         { status: 400 }
       );
     }
 
+    // VM 의 internal_ip 조회
+    const { db } = await import('@/db');
+    const { vms } = await import('@/db/schema');
+    const { eq } = await import('drizzle-orm');
+
+    const vm = await db.select({ internal_ip: vms.internal_ip }).from(vms).where(eq(vms.vm_id, vm_id)).get();
+
+    if (!vm?.internal_ip) {
+      return NextResponse.json(
+        { success: false, message: 'VM not found or no internal_ip assigned' },
+        { status: 404 }
+      );
+    }
+
     const rule = await portForwardService.create({
-      ownerId: typeof owner_id === 'string' ? owner_id : undefined,
-      vmId: typeof vm_id === 'string' ? vm_id : undefined,
-      internalIp: String(internal_ip),
+      vmId: vm_id,
+      internalIp: vm.internal_ip,
       internalPort: Number(internal_port),
       externalPort: external_port !== undefined ? Number(external_port) : undefined,
       protocol: typeof protocol === 'string' ? protocol : undefined,

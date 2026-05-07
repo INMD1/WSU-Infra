@@ -8,27 +8,31 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { ThemeSelector } from '@/components/ThemeSelector'
+import { useTheme } from "@/contexts/ThemeContext";
+import { Button } from "../ui/button";
+import { Moon, Sun } from "lucide-react";
 
 type UserProfileProps = {
-  userdata: string;
+  userdata: Object;
 };
 
 export function AppSidebar({ userdata }: UserProfileProps) {
+
+  const { theme, setTheme } = useTheme();
+
+  const isDark = theme === 'dark';
   return (
     <Sidebar>
       <SidebarHeader>
-        <div className="flex items-center justify-between">
-          <p className="text-xl font-semibold">WSU Cloud Infra</p>
-          <ThemeSelector />
-        </div>
+        <p className="text-xl font-semibold p-2">WSU Cloud Infra</p>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup />
+        
         <SidebarGroup />
       </SidebarContent>
       <SidebarFooter className="border-t border-hairline">
-        <div className="grid grid-cols-1 items-center">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Avatar className="h-10 w-10">
               <AvatarFallback className="bg-primary text-on-primary font-semibold text-sm">
@@ -37,10 +41,26 @@ export function AppSidebar({ userdata }: UserProfileProps) {
             </Avatar>
 
             <div>
-              <p className="text-sm font-medium text-ink">{userdata}</p>
-              <p className="text-muted-soft text-xs">우송대학교 클라우드 인프라</p>
+              {/*@ts-ignore*/}
+              <p className="text-sm font-medium text-ink">{userdata.username}</p>
+              <p className="text-muted-soft text-xs">
+                우송대학교 클라우드 인프라
+              </p>
             </div>
           </div>
+
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+            className="h-9 w-9"
+          >
+            {isDark ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </Button>
         </div>
       </SidebarFooter>
     </Sidebar>

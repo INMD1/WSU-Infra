@@ -23,13 +23,13 @@ import { useEffect, useState } from 'react';
 export default function DashboardPage() {
   const router = useRouter();
   const dash = useDashboard();
-  const [userdata, setuserdata] = useState("userdata");
+  const [userdata, setuserdata] = useState<any>({});
 
   // ──────────────────────────────────────────────────────────
   // Userdata 상태 관리 (Sidebar로 가져오기 위한 변수)
   // ──────────────────────────────────────────────────────────
   useEffect(() => {
-    setuserdata(dash.username);
+    setuserdata(dash);
   }, [dash.username]);
 
   if (dash.loading && !dash.quotas) return <div className="container text-muted">로딩 중...</div>;
@@ -38,12 +38,11 @@ export default function DashboardPage() {
     <div className="min-h-screen w-full bg-canvas">
       <SidebarProvider>
         <AppSidebar userdata={userdata} />
-        <main className="w-full">
+        <main className="w-full object-center">
           <SidebarTrigger className="ml-4 mt-4" />
-
           {/* ── 헤더 ── */}
-          <header className="w-full px-8 py-8 border-b border-hairline">
-            <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-6">
+          <div className='px-2 sm:px-24'>
+            <div className="flex mb-12 flex-col md:flex-row md:justify-between md:items-start gap-6 px-10 ">
               <div>
                 <h1 className="display-md text-ink mb-1">클라우드 대시보드</h1>
                 <p className="caption-uppercase text-muted">학번: {dash.username}</p>
@@ -59,77 +58,24 @@ export default function DashboardPage() {
                 <button className="btn-ghost" onClick={dash.handleLogout}>로그아웃</button>
               </div>
             </div>
-          </header>
 
-          {/* ── 쿼터 사용량 ── */}
-          {dash.quotas && <QuotaSection quotas={dash.quotas} />}
+            {/* ── 쿼터 사용량 ── */}
+            {dash.quotas && <QuotaSection quotas={dash.quotas} />}
 
-          {/* ── VM 목록 ── */}
-          <VmTable
-            vms={dash.vms}
-            actingVmId={dash.actingVmId}
-            visiblePasswords={dash.visiblePasswords}
-            onTogglePassword={(vmId) => dash.setVisiblePasswords(p => ({ ...p, [vmId]: !p[vmId] }))}
-            onOpenPortForward={(vm) => dash.setPfVm(vm)}
-            onOpenConsole={dash.handleOpenConsole}
-            onVmAction={dash.handleVmAction}
-            onOpenSpecModal={dash.openSpecModal}
-            onDeleteVm={dash.handleDeleteVm}
-          />
+            {/* ── VM 목록 ── */}
+            <VmTable vms={dash.vms} />
 
-          {/* ── 모달: VM 생성 ── */}
-          {dash.showCreateModal && (
-            <CreateVmModal
-              username={dash.username}
-              images={dash.images}
-              includeAllImages={dash.includeAllImages}
-              form={dash.newVm}
-              error={dash.createError}
-              isCreating={dash.isCreating}
-              onFormChange={dash.setNewVm}
-              onToggleAllImages={dash.setIncludeAllImages}
-              onSubmit={dash.handleCreateVm}
-              onClose={dash.closeCreateModal}
-            />
-          )}
+            {/* ── 모달: Job 진행 상황 ── */}
+            {dash.showJobsModal && dash.createResult && (
+              <JobProgressModal
+                jobId={dash.createResult.jobId}
+                estimatedWait={dash.createResult.estimatedWait}
+                jobStatus={dash.jobStatus}
+                onClose={() => dash.setShowJobsModal(false)}
+              />
+            )}
 
-          {/* ── 모달: 포트포워딩 ── */}
-          {dash.pfVm && (
-            <PortForwardModal
-              vm={dash.pfVm}
-              form={dash.newPf}
-              error={dash.pfError}
-              isSubmitting={dash.pfSubmitting}
-              deletingPfId={dash.deletingPfId}
-              onFormChange={dash.setNewPf}
-              onSubmit={dash.handleCreatePf}
-              onDeletePf={dash.handleDeletePf}
-              onClose={() => dash.setPfVm(null)}
-            />
-          )}
-
-          {/* ── 모달: 사양 변경 ── */}
-          {dash.specVm && (
-            <SpecChangeModal
-              vm={dash.specVm}
-              form={dash.specForm}
-              error={dash.specError}
-              isSubmitting={dash.specSubmitting}
-              onFormChange={dash.setSpecForm}
-              onSubmit={dash.handleSpecSubmit}
-              onClose={() => dash.setSpecVm(null)}
-            />
-          )}
-
-          {/* ── 모달: Job 진행 상황 ── */}
-          {dash.showJobsModal && dash.createResult && (
-            <JobProgressModal
-              jobId={dash.createResult.jobId}
-              estimatedWait={dash.createResult.estimatedWait}
-              jobStatus={dash.jobStatus}
-              onClose={() => dash.setShowJobsModal(false)}
-            />
-          )}
+          </div>
         </main>
       </SidebarProvider>
     </div>

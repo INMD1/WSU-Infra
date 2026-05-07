@@ -153,7 +153,7 @@ function ImageCard({ img, isSelected, onSelect }: { img: Image; isSelected: bool
           <span className="text-[10px] text-muted ml-auto">{img.size_gb.toFixed(1)} GB</span>
         )}
       </div>
-      <div className={`text-sm word-break-break-all leading-tight ${isSelected ? 'font-semibold text-primary' : 'text-ink'}`}>
+      <div className={`text-sm leading-tight break-words line-clamp-2 ${isSelected ? 'font-semibold text-primary' : 'text-ink'}`}>
         {img.name}
       </div>
       {isSelected && (
