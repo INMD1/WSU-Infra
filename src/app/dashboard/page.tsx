@@ -12,23 +12,32 @@ import { useRouter } from 'next/navigation';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/app-sidebar';
 import { useDashboard } from './_hooks/useDashboard';
-import { QuotaSection }      from './_components/QuotaSection';
-import { VmTable }           from './_components/VmTable';
-import { CreateVmModal }     from './_components/CreateVmModal';
-import { PortForwardModal }  from './_components/PortForwardModal';
-import { SpecChangeModal }   from './_components/SpecChangeModal';
-import { JobProgressModal }  from './_components/JobProgressModal';
+import { QuotaSection } from './_components/QuotaSection';
+import { VmTable } from './_components/VmTable';
+import { CreateVmModal } from './_components/CreateVmModal';
+import { PortForwardModal } from './_components/PortForwardModal';
+import { SpecChangeModal } from './_components/SpecChangeModal';
+import { JobProgressModal } from './_components/JobProgressModal';
+import { useEffect, useState } from 'react';
 
 export default function DashboardPage() {
   const router = useRouter();
   const dash = useDashboard();
+  const [userdata, setuserdata] = useState("userdata");
+
+  // ──────────────────────────────────────────────────────────
+  // Userdata 상태 관리 (Sidebar로 가져오기 위한 변수)
+  // ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    setuserdata(dash.username);
+  }, [dash.username]);
 
   if (dash.loading && !dash.quotas) return <div className="container">로딩 중...</div>;
 
   return (
     <div className="min-h-screen w-full gcp-bg">
       <SidebarProvider>
-        <AppSidebar />
+        <AppSidebar userdata={userdata} />
         <main className="w-full">
           <SidebarTrigger className="ml-4 mt-4" />
 

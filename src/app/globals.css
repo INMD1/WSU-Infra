@@ -7,34 +7,34 @@
 
 @theme {
   /* Brand & Accent */
-  --color-primary: #cc785c;
-  --color-primary-active: #a9583e;
-  --color-primary-disabled: #e6dfd8;
-  --color-accent-teal: #5db8a6;
-  --color-accent-amber: #e8a55a;
+  --color-primary: var(--primary, #cc785c);
+  --color-primary-active: var(--primary-active, #a9583e);
+  --color-primary-disabled: var(--primary-disabled, #e6dfd8);
+  --color-accent-teal: var(--accent-teal, #5db8a6);
+  --color-accent-amber: var(--accent-amber, #e8a55a);
   /* Surface */
-  --color-canvas: #faf9f5;
-  --color-surface-soft: #f5f0e8;
-  --color-surface-card: #efe9de;
-  --color-surface-cream-strong: #e8e0d2;
-  --color-surface-dark: #181715;
-  --color-surface-dark-elevated: #252320;
-  --color-surface-dark-soft: #1f1e1b;
-  --color-hairline: #e6dfd8;
-  --color-hairline-soft: #ebe6df;
+  --color-canvas: var(--canvas, #faf9f5);
+  --color-surface-soft: var(--surface-soft, #f5f0e8);
+  --color-surface-card: var(--surface-card, #efe9de);
+  --color-surface-cream-strong: var(--surface-cream-strong, #e8e0d2);
+  --color-surface-dark: var(--surface-dark, #181715);
+  --color-surface-dark-elevated: var(--surface-dark-elevated, #252320);
+  --color-surface-dark-soft: var(--surface-dark-soft, #1f1e1b);
+  --color-hairline: var(--hairline, #e6dfd8);
+  --color-hairline-soft: var(--hairline-soft, #ebe6df);
   /* Text */
-  --color-ink: #141413;
-  --color-body-strong: #252523;
-  --color-body: #3d3d3a;
-  --color-muted: #6c6a64;
-  --color-muted-soft: #8e8b82;
-  --color-on-primary: #ffffff;
-  --color-on-dark: #faf9f5;
-  --color-on-dark-soft: #a09d96;
+  --color-ink: var(--ink, #141413);
+  --color-body-strong: var(--body-strong, #252523);
+  --color-body: var(--body, #3d3d3a);
+  --color-muted: var(--muted, #6c6a64);
+  --color-muted-soft: var(--muted-soft, #8e8b82);
+  --color-on-primary: var(--on-primary, #ffffff);
+  --color-on-dark: var(--on-dark, #faf9f5);
+  --color-on-dark-soft: var(--on-dark-soft, #a09d96);
   /* Semantic */
-  --color-success: #5db872;
-  --color-warning: #d4a017;
-  --color-error: #c64545;
+  --color-success: var(--success, #5db872);
+  --color-warning: var(--warning, #d4a017);
+  --color-error: var(--error, #c64545);
   /* Typography */
   --font-display: 'Cormorant Garamond', 'Tiempos Headline', 'Georgia', serif;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -55,6 +55,62 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-pill: 9999px;
+}
+
+/* 테마 CSS 변수 (JS 에서 동적 업데이트) */
+:root {
+  /* Claude 테마 (기본값) */
+  --primary: #cc785c;
+  --primary-active: #a9583e;
+  --primary-disabled: #e6dfd8;
+  --accent-teal: #5db8a6;
+  --accent-amber: #e8a55a;
+  --canvas: #faf9f5;
+  --surface-soft: #f5f0e8;
+  --surface-card: #efe9de;
+  --surface-cream-strong: #e8e0d2;
+  --surface-dark: #181715;
+  --surface-dark-elevated: #252320;
+  --surface-dark-soft: #1f1e1b;
+  --hairline: #e6dfd8;
+  --hairline-soft: #ebe6df;
+  --ink: #141413;
+  --body-strong: #252523;
+  --body: #3d3d3a;
+  --muted: #6c6a64;
+  --muted-soft: #8e8b82;
+  --on-primary: #ffffff;
+  --on-dark: #faf9f5;
+  --on-dark-soft: #a09d96;
+  --success: #5db872;
+  --warning: #d4a017;
+  --error: #c64545;
+  /* Shadcn 토큰 */
+  --background: #faf9f5;
+  --foreground: #141413;
+  --card: #efe9de;
+  --card-foreground: #141413;
+  --popover: #faf9f5;
+  --popover-foreground: #141413;
+  --secondary: #f5f0e8;
+  --secondary-foreground: #252523;
+  --muted: #f5f0e8;
+  --muted-foreground: #6c6a64;
+  --accent: #f5f0e8;
+  --accent-foreground: #252523;
+  --destructive: #c64545;
+  --destructive-foreground: #ffffff;
+  --border: #e6dfd8;
+  --input: #e6dfd8;
+  --ring: #cc785c;
+  --sidebar: #faf9f5;
+  --sidebar-foreground: #141413;
+  --sidebar-primary: #141413;
+  --sidebar-primary-foreground: #faf9f5;
+  --sidebar-accent: #efe9de;
+  --sidebar-accent-foreground: #141413;
+  --sidebar-border: #e6dfd8;
+  --sidebar-ring: #cc785c;
 }
 
 @layer base {

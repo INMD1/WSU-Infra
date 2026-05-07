@@ -1,3 +1,5 @@
+'use client';
+
 import {
   Sidebar,
   SidebarContent,
@@ -5,16 +7,42 @@ import {
   SidebarGroup,
   SidebarHeader,
 } from "@/components/ui/sidebar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { ThemeSelector } from './ThemeSelector'
 
-export function AppSidebar() {
+type UserProfileProps = {
+  userdata: string;
+};
+
+export function AppSidebar({ userdata }: UserProfileProps) {
   return (
     <Sidebar>
-      <SidebarHeader />
+      <SidebarHeader>
+        <div className="flex items-center justify-between">
+          <p className="text-xl font-semibold">WSU Cloud Infra</p>
+          <ThemeSelector />
+        </div>
+      </SidebarHeader>
       <SidebarContent>
         <SidebarGroup />
         <SidebarGroup />
       </SidebarContent>
-      <SidebarFooter />
+      <SidebarFooter className="border-t border-gray-200">
+        <div className="grid grid-cols-1 items-center">
+          <div className="flex items-center gap-3">
+            <Avatar className="h-12 w-12">
+              <AvatarFallback className="bg-gray-200 text-black font-semibold">
+                W
+              </AvatarFallback>
+            </Avatar>
+
+            <div>
+              <p className="text-[0.8em] text-gray-400">{userdata}</p>
+              <p className="text-gray-400 text-[0.8em]">우송대학교 클라우드 인프라</p>
+            </div>
+          </div>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   )
 }
