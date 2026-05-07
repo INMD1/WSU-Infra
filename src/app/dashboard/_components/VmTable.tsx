@@ -1,7 +1,7 @@
 // VM 목록 테이블 전체를 렌더링합니다.
 // 각 행은 VmTableRow 컴포넌트로 분리되어 있습니다.
 
-import type { Vm } from '../types';
+import type { Vm } from '@/types/dashboard';
 import { OSIcon } from '@/components/OSIcon';
 import { StatusBadge } from './StatusBadge';
 import { PasswordCell } from './PasswordCell';

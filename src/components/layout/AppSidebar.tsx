@@ -8,7 +8,7 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { ThemeSelector } from './ThemeSelector'
+import { ThemeSelector } from '@/components/ThemeSelector'
 
 type UserProfileProps = {
   userdata: string;

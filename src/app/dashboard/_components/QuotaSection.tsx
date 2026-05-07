@@ -1,7 +1,7 @@
 // 쿼터 사용량 섹션 전체를 렌더링합니다.
 // VM 수, vCPU, RAM, 디스크, 포트 5가지 항목을 그리드로 표시합니다.
 
-import type { Quota } from '../types';
+import type { Quota } from '@/types/dashboard';
 import { QuotaItem } from './QuotaItem';
 
 interface QuotaSectionProps {

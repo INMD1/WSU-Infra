@@ -1,7 +1,7 @@
 // 포트포워딩 모달
 // 현재 규칙 목록 + 새 규칙 추가 폼을 표시합니다.
 
-import type { Vm, NewPortForwardForm } from '../types';
+import type { Vm, NewPortForwardForm } from '@/types/dashboard';
 import { Modal } from './Modal';
 
 interface PortForwardModalProps {

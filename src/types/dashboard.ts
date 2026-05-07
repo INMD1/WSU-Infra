@@ -1,9 +1,3 @@
-/**
- * Dashboard 관련 타입 정의
- * 이 파일에서 모든 타입을 관리합니다.
- */
-
-// 포트포워딩 정보
 export interface PortForward {
   id: string;
   vm_id: string | null;
@@ -16,7 +10,6 @@ export interface PortForward {
   created_at: string;
 }
 
-// 가상 머신 정보
 export interface Vm {
   vm_id: string;
   name: string;
@@ -30,7 +23,6 @@ export interface Vm {
   created_at: string;
 }
 
-// 이미지 정보 (Content Library)
 export interface Image {
   name: string;
   size_gb: number;
@@ -38,7 +30,6 @@ export interface Image {
   type: string;
 }
 
-// 쿼터 정보
 export interface Quota {
   quota: {
     max_vm_count: number;
@@ -56,7 +47,6 @@ export interface Quota {
   };
 }
 
-// VM 생성 폼 데이터
 export interface NewVmForm {
   name: string;
   vcpu: number;
@@ -65,7 +55,6 @@ export interface NewVmForm {
   image_id: string;
 }
 
-// 포트포워딩 생성 폼 데이터
 export interface NewPortForwardForm {
   internal_port: number;
   external_port: string;
@@ -73,7 +62,6 @@ export interface NewPortForwardForm {
   description: string;
 }
 
-// Job 상태
 export interface JobStatus {
   status: string;
   error?: string;

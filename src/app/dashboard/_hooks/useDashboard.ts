@@ -14,8 +14,8 @@ import {
   updateVMSpec,
   createPortForward,
   deletePortForward,
-} from '../api/apiClient';
-import type { Vm, Quota, Image, NewVmForm, NewPortForwardForm, JobStatus } from '../types';
+} from '@/lib/api/client';
+import type { Vm, Quota, Image, NewVmForm, NewPortForwardForm, JobStatus } from '@/types/dashboard';
 
 // 대시보드 페이지에서 사용하는 모든 상태와 액션을 담은 훅
 // page.tsx 는 이 훅을 사용해서 렌더링만 담당합니다.

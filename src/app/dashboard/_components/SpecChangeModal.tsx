@@ -1,7 +1,7 @@
 // VM 사양 변경 모달 (vCPU / RAM)
 // VM이 정지 상태일 때만 사용 가능합니다.
 
-import type { Vm } from '../types';
+import type { Vm } from '@/types/dashboard';
 import { Modal } from './Modal';
 
 interface SpecChangeModalProps {

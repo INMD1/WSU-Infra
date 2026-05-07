@@ -39,9 +39,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const colors = themes[newTheme];
 
     // 모든 컬러 토큰을 CSS 변수로 설정
-    Object.entries(colors as unknown as Record<string, string>).forEach(([key, value]) => {
-      root.style.setProperty(`--${key}`, value);
-    });
+    if (colors) {
+      Object.entries(colors as unknown as Record<string, string>).forEach(([key, value]) => {
+        root.style.setProperty(`--${key}`, value);
+      });
+    }
 
     // 다크 모드 클래스 관리
     if (newTheme === 'dark') {

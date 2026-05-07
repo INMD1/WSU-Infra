@@ -1,7 +1,7 @@
 // VM 생성 모달
 // 이름·vCPU·RAM·디스크 입력과 이미지 선택 그리드를 포함합니다.
 
-import type { Image, NewVmForm } from '../types';
+import type { Image, NewVmForm } from '@/types/dashboard';
 import { Modal } from './Modal';
 import { OSIcon } from '@/components/OSIcon';
 

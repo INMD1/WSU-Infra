@@ -1,7 +1,7 @@
 // VM 생성 Job 진행 상황 모달
 // 완료/실패 후 3초 뒤 자동으로 닫힙니다 (useDashboard 훅에서 처리).
 
-import type { JobStatus } from '../types';
+import type { JobStatus } from '@/types/dashboard';
 import { Modal } from './Modal';
 
 interface JobProgressModalProps {

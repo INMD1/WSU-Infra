@@ -10,7 +10,7 @@
 
 import { useRouter } from 'next/navigation';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
-import { AppSidebar } from '@/components/app-sidebar';
+import { AppSidebar } from '@/components/layout/AppSidebar';
 import { useDashboard } from './_hooks/useDashboard';
 import { QuotaSection } from './_components/QuotaSection';
 import { VmTable } from './_components/VmTable';
