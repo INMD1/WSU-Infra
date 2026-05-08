@@ -1243,10 +1243,51 @@ export const pfsenseClient = {
       throw new Error(`pfSense NAT rule creation failed: HTTP ${res.status}, ${detail}`);
     }
 
+    // pfSense tracker 추출 — 여러 방식 시도
+    let tracker = '';
+
+    // 1) 응답 데이터에서 직접 추출
+    if (json.data?.id && String(json.data.id) !== '0') {
+      tracker = String(json.data.id);
+    } else if (json.data?.tracker && String(json.data.tracker) !== '0') {
+      tracker = String(json.data.tracker);
+    }
+
+    // 2) 응답에 tracker 없으면 규칙 목록에서 찾기
+    if (!tracker) {
+      console.log(`[pfSense] 응답에 tracker 없음 — 목록에서 검색 (internalPort=${params.internalPort}, externalPort=${params.externalPort})`);
+      const rules = await this.listPortForwards();
+      console.log(`[pfSense] 총 규칙 수: ${rules.length}`);
+
+      // 최신순으로 정렬 후 매칭
+      const sorted = rules.slice().sort((a, b) => {
+        const timeA = new Date(a.last_changed_at || a.created_at || '').getTime();
+        const timeB = new Date(b.last_changed_at || b.created_at || '').getTime();
+        return timeB - timeA;
+      });
+
+      for (const r of sorted) {
+        const match =
+          (r['local-port'] === String(params.internalPort) || r['local-port']?.includes(String(params.internalPort))) &&
+          (r.dstport === String(params.externalPort) || r.dstport?.includes(String(params.externalPort)));
+        if (match) {
+          tracker = String(r.tracker);
+          console.log(`[pfSense] 목록에서 tracker 찾음: ${tracker} (descr: ${r.descr})`);
+          break;
+        }
+      }
+    }
+
+    // 3) 그래도 없으면 오류
+    if (!tracker) {
+      console.error(`[pfSense] tracker 추출 실패 — 응답: ${JSON.stringify(json.data)}`);
+      throw new Error('pfSense tracker 추출 실패');
+    }
+
     await this.applyFirewall();
 
     return {
-      tracker: String(json.data.id),
+      tracker,
       externalIp: this.getWanIp(),
       externalPort: params.externalPort,
       internalIp: params.internalIp,
@@ -1262,7 +1303,7 @@ export const pfsenseClient = {
       console.warn(`[pfSense] tracker 가 무효('${id}') — 삭제 skip`);
       return;
     }
-    const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}&apply=true`;
+    const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}`;
     console.log(`[pfSense] DELETE ${url}`);
     const res = await this.fetchWithTls(url, { method: 'DELETE' });
     const rawText = await res.text();
@@ -1286,6 +1327,43 @@ export const pfsenseClient = {
         : 'non-JSON response';
       throw new Error(`pfSense NAT rule deletion failed: HTTP ${res.status}, ${detail}`);
     }
+
+    // 삭제 후 변경사항 적용 (pfSense v2 API 는 DELETE 의 apply 파라미터 미지원)
+    await this.applyFirewall();
+  },
+
+  async deletePortForwardByMatch(params: {
+    internalIp: string;
+    internalPort: number;
+    externalPort: number;
+    protocol?: string;
+  }): Promise<void> {
+    this.assertConfigured();
+    console.log(`[pfSense] 포트포워딩 규칙 검색: internalIp=${params.internalIp}, internalPort=${params.internalPort}, externalPort=${params.externalPort}`);
+
+    const rules = await this.listPortForwards();
+    console.log(`[pfSense] 총 규칙 수: ${rules.length}`);
+
+    const match = rules.find(r => {
+      const localPortMatch =
+        r['local-port'] === String(params.internalPort) ||
+        r['local-port']?.includes(String(params.internalPort));
+      const dstPortMatch =
+        r.dstport === String(params.externalPort) ||
+        r.dstport?.includes(String(params.externalPort));
+      const protocolMatch = !params.protocol || r.protocol === params.protocol || r.protocol === 'tcp/udp';
+      return localPortMatch && dstPortMatch && protocolMatch;
+    });
+
+    if (!match) {
+      console.warn(`[pfSense] 일치하는 규칙을 찾지 못함`);
+      throw new Error(`일치하는 규칙을 찾지 못함 (internalPort=${params.internalPort}, externalPort=${params.externalPort})`);
+    }
+
+    console.log(`[pfSense] 일치하는 규칙 찾음: tracker=${match.tracker}, descr=${match.descr}`);
+
+    // 규칙 삭제
+    await this.deletePortForward(String(match.tracker));
   },
 };
 

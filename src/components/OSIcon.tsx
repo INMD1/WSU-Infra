@@ -10,34 +10,8 @@ interface OSIconProps {
 }
 
 const OS_ICONS: Record<string, { svg: string; label: string }> = {
-  // Windows
-  windows: {
-    label: 'Windows',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" fill="none">
-      <path d="M0 12.8L40.7 0v42.7H0V12.8zM41.8 0L88 11.5v31.2H41.8V0zM0 44.8h40.7v42.7L0 74.5V44.8zM41.8 44.8H88v31.7L41.8 88V44.8z" fill="#00A4EF"/>
-    </svg>`
-  },
-  'windows-11': {
-    label: 'Windows 11',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" fill="none">
-      <path d="M0 12.8L40.7 0v42.7H0V12.8zM41.8 0L88 11.5v31.2H41.8V0zM0 44.8h40.7v42.7L0 74.5V44.8zM41.8 44.8H88v31.7L41.8 88V44.8z" fill="#0078D4"/>
-    </svg>`
-  },
-  'windows-10': {
-    label: 'Windows 10',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" fill="none">
-      <path d="M0 12.8L40.7 0v42.7H0V12.8zM41.8 0L88 11.5v31.2H41.8V0zM0 44.8h40.7v42.7L0 74.5V44.8zM41.8 44.8H88v31.7L41.8 88V44.8z" fill="#00A4EF"/>
-    </svg>`
-  },
-  'windows-server': {
-    label: 'Windows Server',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" fill="none">
-      <path d="M0 12.8L40.7 0v42.7H0V12.8zM41.8 0L88 11.5v31.2H41.8V0zM0 44.8h40.7v42.7L0 74.5V44.8zM41.8 44.8H88v31.7L41.8 88V44.8z" fill="#4B6BB9"/>
-    </svg>`
-  },
-
   // Linux Distributions
-  ubuntu: {
+  Ubuntu: {
     label: 'Ubuntu',
     svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
       <circle cx="50" cy="50" r="50" fill="#E95420"/>
@@ -109,11 +83,7 @@ const OS_ICONS: Record<string, { svg: string; label: string }> = {
 };
 
 const OS_KEYWORDS: Record<string, string[]> = {
-  windows: ['win', 'windows', 'vista', 'xp', '2000', 'nt'],
-  'windows-11': ['win11', 'windows11', 'windows-11', 'win-11'],
-  'windows-10': ['win10', 'windows10', 'windows-10', 'win-10'],
-  'windows-server': ['server', '2019', '2022', '2016', '2012', '2008'],
-  ubuntu: ['ubuntu', 'ubtu'],
+  ubuntu: ['ubuntu', 'ubtu','Ubuntu'],
   debian: ['debian', 'deb'],
   centos: ['centos', 'cent'],
   fedora: ['fedora', 'fdra'],
@@ -139,6 +109,7 @@ function detectOS(imageName: string): string {
 
 export function OSIcon({ imageName, size = 'md', className = '' }: OSIconProps) {
   const osKey = detectOS(imageName);
+  console.log(osKey)
   const osData = OS_ICONS[osKey] || OS_ICONS.default;
 
   const sizeClasses = {

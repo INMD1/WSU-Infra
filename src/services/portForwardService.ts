@@ -61,8 +61,13 @@ async function allocateExternalPort(requestedPort?: number): Promise<number> {
     return requestedPort;
   }
 
-  for (let p = PORT_RANGE_START; p <= PORT_RANGE_END; p++) {
-    if (!usedSet.has(p)) return p;
+  // 완전히 랜덤한 포트 선택 (최대 1000 회 시도)
+  const maxAttempts = 1000;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const randomPort = Math.floor(Math.random() * (PORT_RANGE_END - PORT_RANGE_START + 1)) + PORT_RANGE_START;
+    if (!usedSet.has(randomPort)) {
+      return randomPort;
+    }
   }
   throw new Error('No available external ports in configured range');
 }
@@ -184,8 +189,20 @@ export const portForwardService = {
     if (rows.length === 0) return false;
 
     const rule = rows[0];
-    if (rule.pfsense_tracker) {
-      await pfsenseClient.deletePortForward(rule.pfsense_tracker);
+
+    // pfSense 에서 내부 IP 와 포트가 일치하는 규칙 찾아 삭제
+    try {
+      await pfsenseClient.deletePortForwardByMatch({
+        internalIp: rule.internal_ip,
+        internalPort: rule.internal_port,
+        externalPort: rule.external_port,
+        protocol: rule.protocol,
+      });
+    } catch (err: any) {
+      // 규칙이 이미 없는 경우 (NOT_FOUND 등) 는 무시하고 진행
+      if (!err.message?.includes('NOT_FOUND') && !err.message?.includes('찾지')) {
+        console.error('[PortForward] pfSense 삭제 실패:', err);
+      }
     }
 
     await db.delete(portForwards).where(eq(portForwards.id, id));

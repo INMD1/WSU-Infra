@@ -55,7 +55,6 @@ export default function DashboardPage() {
                   <button className="btn-secondary" onClick={() => router.push('/admin')}>관리자 패널</button>
                 )}
                 <button className="btn-primary" onClick={() => dash.setShowCreateModal(true)}>새 VM 생성</button>
-                <button className="btn-ghost" onClick={dash.handleLogout}>로그아웃</button>
               </div>
             </div>
 
@@ -65,6 +64,22 @@ export default function DashboardPage() {
             {/* ── VM 목록 ── */}
             <VmTable vms={dash.vms} />
 
+            {/* ── 모달: VM 생성 ── */}
+            {dash.showCreateModal && (
+              <CreateVmModal
+                username={dash.username}
+                images={dash.images}
+                includeAllImages={dash.includeAllImages}
+                form={dash.newVm}
+                error={dash.createError}
+                isCreating={dash.isCreating}
+                onFormChange={dash.setNewVm}
+                onToggleAllImages={dash.setIncludeAllImages}
+                onSubmit={dash.handleCreateVm}
+                onClose={dash.closeCreateModal}
+              />
+            )}
+
             {/* ── 모달: Job 진행 상황 ── */}
             {dash.showJobsModal && dash.createResult && (
               <JobProgressModal
@@ -72,6 +87,34 @@ export default function DashboardPage() {
                 estimatedWait={dash.createResult.estimatedWait}
                 jobStatus={dash.jobStatus}
                 onClose={() => dash.setShowJobsModal(false)}
+              />
+            )}
+
+            {/* ── 모달: 포트포워딩 ── */}
+            {dash.pfVm && (
+              <PortForwardModal
+                vm={dash.pfVm}
+                form={dash.newPf}
+                error={dash.pfError}
+                isSubmitting={dash.pfSubmitting}
+                deletingPfId={dash.deletingPfId}
+                onFormChange={dash.setNewPf}
+                onSubmit={dash.handleCreatePf}
+                onDeletePf={dash.handleDeletePf}
+                onClose={() => dash.setPfVm(null)}
+              />
+            )}
+
+            {/* ── 모달: 사양 변경 ── */}
+            {dash.specVm && (
+              <SpecChangeModal
+                vm={dash.specVm}
+                form={dash.specForm}
+                error={dash.specError}
+                isSubmitting={dash.specSubmitting}
+                onFormChange={dash.setSpecForm}
+                onSubmit={dash.handleSpecSubmit}
+                onClose={() => dash.setSpecVm(null)}
               />
             )}
 

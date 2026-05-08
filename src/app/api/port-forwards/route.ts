@@ -62,7 +62,8 @@ export async function POST(request: Request) {
     const { vms } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
 
-    const vm = await db.select({ internal_ip: vms.internal_ip }).from(vms).where(eq(vms.vm_id, vm_id)).get();
+    const result = await db.select({ internal_ip: vms.internal_ip }).from(vms).where(eq(vms.vm_id, vm_id)).limit(1);
+    const vm = result[0];
 
     if (!vm?.internal_ip) {
       return NextResponse.json(

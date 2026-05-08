@@ -62,9 +62,6 @@ export function CreateVmModal({
         <div className="flex justify-between items-center mb-2">
           <label className="block text-sm font-medium text-body-strong">이미지 선택 (Content Library)</label>
           <label className="flex items-center gap-2 text-xs text-muted cursor-pointer">
-            <input type="checkbox" checked={includeAllImages}
-              onChange={e => onToggleAllImages(e.target.checked)} />
-            ISO 등 모든 항목 표시
           </label>
         </div>
 
