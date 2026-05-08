@@ -1249,10 +1249,10 @@ export const pfsenseClient = {
     // pfSense tracker 추출 — 여러 방식 시도
     let tracker = '';
 
-    // 1) 응답 데이터에서 직접 추출
-    if (json.data?.id && String(json.data.id) !== '0') {
+    // 1) 응답 데이터에서 직접 추출 (id=0도 유효한 pfSense 배열 인덱스)
+    if (json.data?.id !== undefined && json.data?.id !== null) {
       tracker = String(json.data.id);
-    } else if (json.data?.tracker && String(json.data.tracker) !== '0') {
+    } else if (json.data?.tracker !== undefined && json.data?.tracker !== null) {
       tracker = String(json.data.tracker);
     }
 
@@ -1302,8 +1302,9 @@ export const pfsenseClient = {
 
   async deletePortForward(id: string): Promise<void> {
     this.assertConfigured();
-    // tracker 가 빈값/없음/0 같은 무효한 값이면 호출하지 않고 idempotent 통과
-    if (!id || id === '0' || id === 'null' || id === 'undefined') {
+    // tracker 가 빈값/null/undefined 같은 무효한 값이면 호출하지 않고 idempotent 통과
+    // '0'은 pfSense 배열 인덱스 0으로 유효한 값
+    if (!id || id === 'null' || id === 'undefined') {
       console.warn(`[pfSense] tracker 가 무효('${id}') — 삭제 skip`);
       return;
     }
