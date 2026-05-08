@@ -1138,6 +1138,7 @@ export interface PortForwardResult {
 }
 
 export interface PfSenseNatRule {
+  id?: number;         // pfSense 배열 인덱스 — DELETE 시 이 값을 사용해야 함
   tracker: string;
   interface: string;
   protocol: string;
@@ -1145,6 +1146,8 @@ export interface PfSenseNatRule {
   'local-port': string;
   dstport: string;
   descr: string;
+  created_at?: string;
+  last_changed_at?: string;
 }
 
 export const pfsenseClient = {
@@ -1268,11 +1271,12 @@ export const pfsenseClient = {
 
       for (const r of sorted) {
         const match =
-          (r['local-port'] === String(params.internalPort) || r['local-port']?.includes(String(params.internalPort))) &&
-          (r.dstport === String(params.externalPort) || r.dstport?.includes(String(params.externalPort)));
+          r['local-port'] === String(params.internalPort) &&
+          r.dstport === String(params.externalPort);
         if (match) {
-          tracker = String(r.tracker);
-          console.log(`[pfSense] 목록에서 tracker 찾음: ${tracker} (descr: ${r.descr})`);
+          // 생성 직후이므로 id(인덱스)가 있으면 우선 사용, 없으면 tracker 보관
+          tracker = r.id !== undefined ? String(r.id) : String(r.tracker);
+          console.log(`[pfSense] 목록에서 규칙 찾음: id=${r.id}, tracker=${r.tracker} (descr: ${r.descr})`);
           break;
         }
       }
@@ -1345,12 +1349,9 @@ export const pfsenseClient = {
     console.log(`[pfSense] 총 규칙 수: ${rules.length}`);
 
     const match = rules.find(r => {
-      const localPortMatch =
-        r['local-port'] === String(params.internalPort) ||
-        r['local-port']?.includes(String(params.internalPort));
-      const dstPortMatch =
-        r.dstport === String(params.externalPort) ||
-        r.dstport?.includes(String(params.externalPort));
+      // includes() 대신 정확한 문자열 비교 — '22'.includes('2') 같은 오매칭 방지
+      const localPortMatch = r['local-port'] === String(params.internalPort);
+      const dstPortMatch = r.dstport === String(params.externalPort);
       const protocolMatch = !params.protocol || r.protocol === params.protocol || r.protocol === 'tcp/udp';
       return localPortMatch && dstPortMatch && protocolMatch;
     });
@@ -1360,10 +1361,12 @@ export const pfsenseClient = {
       throw new Error(`일치하는 규칙을 찾지 못함 (internalPort=${params.internalPort}, externalPort=${params.externalPort})`);
     }
 
-    console.log(`[pfSense] 일치하는 규칙 찾음: tracker=${match.tracker}, descr=${match.descr}`);
+    // pfSense DELETE API는 배열 인덱스(id)를 기대함. tracker(타임스탬프)를 전달하면
+    // pfSense가 해당 인덱스의 규칙을 못 찾아 404를 반환하고 규칙이 삭제되지 않음.
+    const deleteId = match.id !== undefined ? String(match.id) : String(match.tracker);
+    console.log(`[pfSense] 일치하는 규칙 찾음: id=${match.id}, tracker=${match.tracker}, descr=${match.descr}`);
 
-    // 규칙 삭제
-    await this.deletePortForward(String(match.tracker));
+    await this.deletePortForward(deleteId);
   },
 };
 
