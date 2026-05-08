@@ -1308,22 +1308,33 @@ export const pfsenseClient = {
       console.warn(`[pfSense] tracker 가 무효('${id}') — 삭제 skip`);
       return;
     }
-    const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward?id=${encodeURIComponent(id)}`;
-    console.log(`[pfSense] DELETE ${url}`);
-    const res = await this.fetchWithTls(url, { method: 'DELETE' });
+    // pfSense API v2 PHP 레이어가 쿼리 파라미터 id=0을 빈값으로 처리(MODEL_REQUIRES_ID)하므로
+    // id를 JSON body로도 함께 전송해 우회
+    const url = `${this.getUrl()}/api/v2/firewall/nat/port_forward`;
+    const numericId = Number(id);
+    console.log(`[pfSense] DELETE ${url} (id=${numericId})`);
+    const res = await this.fetchWithTls(url, {
+      method: 'DELETE',
+      body: JSON.stringify({ id: numericId }),
+    });
     const rawText = await res.text();
     let json: any = null;
     try { json = JSON.parse(rawText); } catch { /* non-JSON */ }
     console.log(`[pfSense] delete response: status=${res.status}, body=${rawText.slice(0, 600)}`);
 
-    // 이미 없거나 ID 형식 문제로 pfSense 가 못 찾는 케이스는 모두 idempotent 통과
-    const idempotentResponses = ['NOT_FOUND', 'MODEL_REQUIRES_ID', 'OBJECT_NOT_FOUND'];
+    // 규칙이 실제로 없는 경우만 idempotent 통과 (MODEL_REQUIRES_ID는 id=0 문제이므로 제외)
+    const idempotentResponses = ['NOT_FOUND', 'OBJECT_NOT_FOUND'];
     if (
       res.status === 404 ||
       (json && (json.code === 404 || idempotentResponses.includes(json.response_id)))
     ) {
-      console.warn(`[pfSense] rule ${id} 이미 없거나 식별 불가 — 삭제 skip (response_id=${json?.response_id})`);
+      console.warn(`[pfSense] rule ${id} 이미 없음 — 삭제 skip (response_id=${json?.response_id})`);
       return;
+    }
+
+    // body로 전송해도 MODEL_REQUIRES_ID가 반환되면 진짜 API 문제 → 에러 처리
+    if (json?.response_id === 'MODEL_REQUIRES_ID') {
+      throw new Error(`pfSense NAT rule deletion failed: id=${id} 를 인식하지 못함 (MODEL_REQUIRES_ID). pfSense API 버전 확인 필요.`);
     }
 
     if (!json || json.code !== 200) {
