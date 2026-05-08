@@ -1350,16 +1350,19 @@ export const pfsenseClient = {
     console.log(`[pfSense] 총 규칙 수: ${rules.length}`);
 
     const match = rules.find(r => {
-      // includes() 대신 정확한 문자열 비교 — '22'.includes('2') 같은 오매칭 방지
-      const localPortMatch = r['local-port'] === String(params.internalPort);
-      const dstPortMatch = r.dstport === String(params.externalPort);
+      const rAny = r as any;
+      // pfSense API v1은 'local-port'/'dstport', v2는 'local_port'/'destination_port' 반환
+      const localPort = r['local-port'] ?? rAny['local_port'] ?? '';
+      const dstPort = rAny['dstport'] ?? rAny['destination_port'] ?? '';
+      const localPortMatch = String(localPort) === String(params.internalPort);
+      const dstPortMatch = String(dstPort) === String(params.externalPort);
       const protocolMatch = !params.protocol || r.protocol === params.protocol || r.protocol === 'tcp/udp';
       return localPortMatch && dstPortMatch && protocolMatch;
     });
 
     if (!match) {
-      console.warn(`[pfSense] 일치하는 규칙을 찾지 못함`);
-      throw new Error(`일치하는 규칙을 찾지 못함 (internalPort=${params.internalPort}, externalPort=${params.externalPort})`);
+      console.warn(`[pfSense] 일치하는 규칙을 찾지 못함 — pfSense에 없거나 이미 삭제된 것으로 간주하고 skip (internalPort=${params.internalPort}, externalPort=${params.externalPort})`);
+      return;
     }
 
     // pfSense DELETE API는 배열 인덱스(id)를 기대함. tracker(타임스탬프)를 전달하면
