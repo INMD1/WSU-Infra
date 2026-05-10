@@ -17,6 +17,7 @@ export interface Vm {
   vcpu: number;
   ram_gb: number;
   disk_gb: number;
+  image_id: string;
   internal_ip: string | null;
   vm_password: string | null;
   port_forwards: PortForward[];

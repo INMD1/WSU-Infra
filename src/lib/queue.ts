@@ -82,7 +82,7 @@ export class JobQueue {
     const startTime = Date.now();
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Job ${job.id} timed out`)), job.timeout!);
+        setTimeout(() => reject(new Error(`Job ${job.id} timed out after ${job.timeout}ms`)), job.timeout!);
       });
 
       job.result = await Promise.race([this.executeJob(job), timeoutPromise]);
@@ -91,19 +91,11 @@ export class JobQueue {
       console.log(`[Queue] Job ${job.id} (${job.type}) completed in ${Date.now() - startTime}ms`);
     } catch (error: any) {
       console.error(`[Queue] Job ${job.id} (${job.type}) failed:`, error.message);
-
-      if (job.retryCount < job.maxRetries) {
-        job.retryCount++;
-        job.status = 'pending';
-        this.processingQueue.unshift(job);
-        console.log(`[Queue] Job ${job.id} retry ${job.retryCount}/${job.maxRetries}`);
-      } else {
-        job.status = 'failed';
-        job.error = error.message;
-        job.completedAt = new Date();
-      }
+      job.status = 'failed';
+      job.error = error.message;
+      job.completedAt = new Date();
     } finally {
-      this.activeJobs--;
+      this.activeJobs = Math.max(0, this.activeJobs - 1);
       this.process();
     }
   }

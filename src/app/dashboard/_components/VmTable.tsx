@@ -52,7 +52,7 @@ export function VmTable({
                   onClick={() => handleRowClick(vm.vm_id)}
                   className="cursor-pointer hover:bg-surface-soft transition-colors"
                 >
-                  <td><OSIcon imageName={vm.name} size="sm" /></td>
+                  <td><OSIcon imageName={vm.image_id || vm.name} size="sm" /></td>
                   <td className="font-medium text-ink">{vm.name}</td>
                   <td><StatusBadge status={vm.status} /></td>
                   <td className="text-muted">{new Date(vm.created_at).toLocaleDateString()}</td>

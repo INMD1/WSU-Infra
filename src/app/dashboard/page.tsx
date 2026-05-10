@@ -34,6 +34,14 @@ export default function DashboardPage() {
 
   if (dash.loading && !dash.quotas) return <div className="container text-muted">로딩 중...</div>;
 
+  const isQuotaExhausted = dash.quotas ? (
+    dash.quotas.usage.vm_count >= dash.quotas.quota.max_vm_count ||
+    dash.quotas.usage.vcpu_total >= dash.quotas.quota.max_vcpu_total ||
+    dash.quotas.usage.ram_gb_total >= dash.quotas.quota.max_ram_gb_total ||
+    dash.quotas.usage.disk_gb_total >= dash.quotas.quota.max_disk_gb_total ||
+    dash.quotas.usage.ports_used >= dash.quotas.quota.max_public_ports
+  ) : false;
+
   return (
     <div className="min-h-screen w-full bg-canvas">
       <SidebarProvider>
@@ -54,7 +62,14 @@ export default function DashboardPage() {
                 {dash.role === 'admin' && (
                   <button className="btn-secondary" onClick={() => router.push('/admin')}>관리자 패널</button>
                 )}
-                <button className="btn-primary" onClick={() => dash.setShowCreateModal(true)}>새 VM 생성</button>
+                <button
+                  className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => dash.setShowCreateModal(true)}
+                  disabled={isQuotaExhausted}
+                  title={isQuotaExhausted ? '쿼터 한도에 도달하여 새 VM을 생성할 수 없습니다' : undefined}
+                >
+                  새 VM 생성
+                </button>
               </div>
             </div>
 

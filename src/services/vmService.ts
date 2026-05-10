@@ -19,9 +19,9 @@ function generateVmPassword(): string {
 async function processVmCreateJob(jobData: any): Promise<any> {
   const { data } = jobData;
   const vmPassword = data.password || generateVmPassword();
+  let earlyInsertedVmId: string | null = null;
 
   try {
-    let earlyInserted = false;
     const provisioned = await esxiClient.createVmFromTemplate({
       name: data.name,
       template: data.image_id,
@@ -47,21 +47,21 @@ async function processVmCreateJob(jobData: any): Promise<any> {
           vm_password: vmPassword,
           owner_id: data.owner_id || null,
         });
-        earlyInserted = true;
+        earlyInsertedVmId = info.vm_id;
         console.log(`[VM Service] VM ${info.vm_id} 등록(starting) — IP 대기 중`);
       },
     });
 
     console.log(`[VM Service] VM provisioned: ${provisioned.vm_id} → ${provisioned.ip_address}`);
 
-    if (earlyInserted) {
+    if (earlyInsertedVmId) {
       await db.update(vms).set({
         status: provisioned.status as any,
         ssh_host: provisioned.ip_address || '',
         internal_ip: provisioned.ip_address || '',
       }).where(eq(vms.vm_id, provisioned.vm_id));
     } else {
-      // 콜백 실패한 경우의 폴백 insert
+      // onPowerOn 콜백이 실행되지 않은 경우 폴백 insert
       await db.insert(vms).values({
         vm_id: provisioned.vm_id,
         name: data.name,
@@ -110,6 +110,12 @@ async function processVmCreateJob(jobData: any): Promise<any> {
     };
   } catch (error: any) {
     console.error(`[VM Service] VM creation failed:`, error.message);
+    // onPowerOn 이후 실패한 경우 DB에서 'starting' row 제거 (govc는 이미 destroy됨)
+    if (earlyInsertedVmId) {
+      await db.delete(vms).where(eq(vms.vm_id, earlyInsertedVmId)).catch(e =>
+        console.warn(`[VM Service] DB rollback 실패 (${earlyInsertedVmId}):`, e?.message)
+      );
+    }
     throw error;
   }
 }

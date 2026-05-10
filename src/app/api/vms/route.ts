@@ -59,10 +59,21 @@ export async function POST(request: Request) {
       );
     }
 
+    // DB에 이미 같은 이름의 VM이 있는지 확인
     const existing = await db.select().from(vms).where(eq(vms.name, fullName));
     if (existing.length > 0) {
       return NextResponse.json(
         { success: false, message: `이미 같은 이름의 VM이 존재합니다: ${fullName}` },
+        { status: 409 }
+      );
+    }
+
+    // 현재 큐(pending/running)에도 같은 이름이 있는지 확인
+    const activeJobs = vmService.getActiveVmCreateJobs();
+    const nameConflict = activeJobs.some(j => j.vmName === fullName);
+    if (nameConflict) {
+      return NextResponse.json(
+        { success: false, message: `같은 이름으로 현재 생성 중인 VM이 있습니다: ${fullName}` },
         { status: 409 }
       );
     }
