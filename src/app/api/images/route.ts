@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const images = await esxiClient.listCloudImages();
     const data = includeAll
       ? images
-      : images.filter(img => img.type === 'ova' || img.type === 'ovf');
+      : images.filter(img => img.type === 'ova' || img.type === 'ovf' || img.type === 'appliance');
     return NextResponse.json({ success: true, source: 'library', data });
   } catch (error: any) {
     console.error('[API] GET /api/images error:', error);
