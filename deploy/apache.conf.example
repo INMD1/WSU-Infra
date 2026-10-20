@@ -1,0 +1,38 @@
+# WSU Server — Apache 2.4 예제 설정
+# 필요 모듈: a2enmod ssl rewrite headers proxy proxy_http proxy_wstunnel
+#
+# 브라우저는 WebSocket 에 Authorization 헤더를 실을 수 없으므로,
+# Apache 가 Proxmox vncwebsocket 으로 프록시하면서 API 토큰을 주입합니다.
+
+<VirtualHost *:443>
+    ServerName vm.example.com
+    DocumentRoot /var/www/wsu-server/public
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/vm.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/vm.example.com/privkey.pem
+
+    <Directory /var/www/wsu-server/public>
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    # ─── noVNC WebSocket → Proxmox ─────────────────────────────────
+    SSLProxyEngine on
+    SSLProxyVerify none
+    SSLProxyCheckPeerCN off
+    SSLProxyCheckPeerName off
+
+    RewriteEngine on
+    RewriteCond %{HTTP:Upgrade} =websocket [NC]
+    RewriteRule ^/pve-ws/nodes/([A-Za-z0-9._-]+)/qemu/([0-9]+)/vncwebsocket$ \
+        wss://10.0.0.10:8006/api2/json/nodes/$1/qemu/$2/vncwebsocket [P,QSA,L]
+
+    <LocationMatch "^/pve-ws/">
+        RequestHeader unset Cookie
+        # 관리자 설정 > Proxmox 연결의 토큰 ID / secret 과 같은 값
+        RequestHeader set Authorization "PVEAPIToken=vmrental@pve!web=00000000-0000-0000-0000-000000000000"
+    </LocationMatch>
+
+    ProxyTimeout 3600
+</VirtualHost>

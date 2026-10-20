@@ -1,0 +1,52 @@
+# WSU Server — nginx 예제 설정
+#
+# 핵심은 /pve-ws/ 위치입니다. 브라우저는 WebSocket 에 Authorization 헤더를 실을 수 없기 때문에
+# nginx 가 Proxmox vncwebsocket 으로 프록시하면서 API 토큰을 주입합니다.
+# vncwebsocket 은 api.php 가 발급한 일회성 vncticket(해당 VM 경로에 묶임, 수 초 후 만료)이
+# 없으면 거부되므로, 이 경로로는 VM 콘솔 연결 외의 API 를 호출할 수 없습니다.
+
+upstream pve_api {
+    server 10.0.0.10:8006;          # Proxmox 노드 주소 (클러스터면 아무 노드나 가능)
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name vm.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/vm.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/vm.example.com/privkey.pem;
+
+    root  /var/www/wsu-server/public;
+    index index.php;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+
+    # ─── noVNC WebSocket → Proxmox ─────────────────────────────────
+    # 관리자 설정 > 콘솔의 WebSocket 경로(기본 /pve-ws)와 같아야 합니다. 그 화면에 값이 채워진 블록이 있습니다.
+    location ~ ^/pve-ws/nodes/([A-Za-z0-9._-]+)/qemu/([0-9]+)/vncwebsocket$ {
+        proxy_pass https://pve_api/api2/json/nodes/$1/qemu/$2/vncwebsocket$is_args$args;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $proxy_host;
+        proxy_set_header Cookie     "";
+        # 관리자 설정 > Proxmox 연결의 토큰 ID / secret 과 같은 값
+        proxy_set_header Authorization "PVEAPIToken=vmrental@pve!web=00000000-0000-0000-0000-000000000000";
+
+        proxy_ssl_verify    off;     # Proxmox 자체 서명 인증서
+        proxy_buffering     off;
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+    }
+
+    location ~ /\. { deny all; }
+}
